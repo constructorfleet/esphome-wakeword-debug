@@ -1,0 +1,65 @@
+esphome:
+  name: audio-stream-device
+  platform: ESP32
+  board: esp32dev
+
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+
+ota:
+  password: "YOUR_OTA_PASSWORD"
+
+wifi:
+  ssid: "YOUR_WIFI_SSID"
+  password: "YOUR_WIFI_PASSWORD"
+  
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Audio Stream Fallback"
+    password: "YOUR_FALLBACK_PASSWORD"
+
+captive_portal:
+
+# Audio Stream WebSocket Component
+audio_stream_ws:
+  id: audio_stream
+  url: "ws://192.168.1.100:8000/ws/audio"
+  i2s_din_pin: 26
+  i2s_ws_pin: 25
+  i2s_clk_pin: 33
+  sample_rate: 16000
+  bits_per_sample: 16
+
+# Button to start streaming
+button:
+  - platform: template
+    name: "Start Audio Streaming"
+    on_press:
+      - audio_stream_ws.start:
+          id: audio_stream
+          
+  - platform: template
+    name: "Stop Audio Streaming"
+    on_press:
+      - audio_stream_ws.stop:
+          id: audio_stream
+
+# Auto-start streaming on boot
+switch:
+  - platform: template
+    name: "Auto-stream on boot"
+    id: auto_stream
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - audio_stream_ws.start:
+          id: audio_stream
+    on_turn_off:
+      - audio_stream_ws.stop:
+          id: audio_stream
