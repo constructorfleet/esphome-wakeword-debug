@@ -41,13 +41,16 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 - Wake word event metadata publishing
 
 ### Ingest Service
+- MQTT subscriber for base64-encoded audio chunks from ESPHome
 - Real-time audio buffering (configurable duration)
+- Automatic wake event clip extraction on wake word detection
 - Wake event clip extraction (pre/post event audio)
 - WAV file generation with metadata
 - MQTT event publishing
 - Home Assistant auto-discovery
 - REST API for manual triggers and monitoring
 - Automatic cleanup of old audio files
+- Legacy WebSocket support for backward compatibility
 
 ## Quick Start
 
@@ -133,9 +136,9 @@ Audio clips are saved to `./audio_clips/` directory.
 Copy `.env.example` to `.env` and customize:
 
 ```bash
-# Audio settings
-SAMPLE_RATE=16000          # Sample rate in Hz
-SAMPLE_WIDTH=2             # Bytes per sample (2=16bit, 4=32bit)
+# Audio settings (match ESPHome configuration)
+SAMPLE_RATE=48000          # Sample rate in Hz (48kHz to match ESPHome)
+SAMPLE_WIDTH=4             # Bytes per sample (4=32bit to match ESPHome)
 CHANNELS=1                 # Number of audio channels
 
 # Buffer settings
@@ -147,6 +150,8 @@ POST_WAKE_DURATION_SECONDS=3.0    # Audio after wake event
 MQTT_BROKER=mqtt           # MQTT broker hostname
 MQTT_PORT=1883            # MQTT broker port
 MQTT_TOPIC_PREFIX=wakeword/debug
+MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm   # Topic for base64 audio data
+MQTT_META_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events
 ```
 
 ### I2S Microphone Wiring

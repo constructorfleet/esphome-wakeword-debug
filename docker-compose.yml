@@ -27,8 +27,8 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8000
-      - SAMPLE_RATE=16000
-      - SAMPLE_WIDTH=2
+      - SAMPLE_RATE=48000
+      - SAMPLE_WIDTH=4
       - CHANNELS=1
       - BUFFER_DURATION_SECONDS=60.0
       - PRE_WAKE_DURATION_SECONDS=2.0
@@ -38,6 +38,8 @@ services:
       - MQTT_PORT=1883
       - MQTT_TOPIC_PREFIX=wakeword/debug
       - MQTT_CLIENT_ID=wakeword-ingest-service
+      - MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm
+      - MQTT_META_TOPIC=satellite1/audio_debug/meta
       - HASS_DISCOVERY_PREFIX=homeassistant
     volumes:
       - ./audio_clips:/app/audio_clips

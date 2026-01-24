@@ -9,6 +9,7 @@ from .config import settings
 from .audio_buffer import AudioBuffer
 from .wav_writer import WAVWriter
 from .mqtt_publisher import MQTTPublisher
+from .mqtt_subscriber import MQTTSubscriber
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +29,7 @@ app = FastAPI(
 audio_buffer: Optional[AudioBuffer] = None
 wav_writer: Optional[WAVWriter] = None
 mqtt_publisher: Optional[MQTTPublisher] = None
+mqtt_subscriber: Optional[MQTTSubscriber] = None
 
 # Track active websocket connections
 active_connections: list[WebSocket] = []
@@ -57,6 +59,72 @@ def get_mqtt_publisher() -> MQTTPublisher:
     return mqtt_publisher
 
 
+def get_mqtt_subscriber() -> MQTTSubscriber:
+    """Get or create MQTT subscriber instance."""
+    global mqtt_subscriber
+    if mqtt_subscriber is None:
+        mqtt_subscriber = MQTTSubscriber()
+    return mqtt_subscriber
+
+
+async def handle_audio_data(audio_data: bytes) -> None:
+    """Handle incoming audio data from MQTT."""
+    buffer = get_audio_buffer()
+    await buffer.append(audio_data)
+    logger.debug(f"Received {len(audio_data)} bytes of audio data")
+
+
+async def handle_wake_event(metadata: dict) -> None:
+    """Handle wake word event from MQTT."""
+    logger.info(f"Wake word detected: {metadata}")
+    
+    # Check if this is a wake event
+    if metadata.get("event") != "wake":
+        return
+    
+    try:
+        buffer = get_audio_buffer()
+        writer = get_wav_writer()
+        mqtt = get_mqtt_publisher()
+        
+        # Use default durations for wake event
+        pre_duration = settings.PRE_WAKE_DURATION_SECONDS
+        post_duration = settings.POST_WAKE_DURATION_SECONDS
+        
+        # Extract clip from buffer
+        clip = await buffer.get_clip(
+            pre_duration=pre_duration,
+            post_duration=post_duration
+        )
+        
+        if clip is None:
+            logger.warning("Insufficient audio data in buffer for wake event")
+            return
+        
+        # Create metadata
+        timestamp = datetime.utcnow().isoformat()
+        clip_metadata = {
+            "timestamp": timestamp,
+            "pre_duration": pre_duration,
+            "post_duration": post_duration,
+            "sample_rate": settings.SAMPLE_RATE,
+            "samples": len(clip),
+            "duration": len(clip) / settings.SAMPLE_RATE,
+            "wake_metadata": metadata
+        }
+        
+        # Write WAV file
+        wav_path = writer.write_clip(clip, metadata=clip_metadata)
+        
+        # Publish MQTT event
+        mqtt.publish_wake_event(wav_path, clip_metadata)
+        
+        logger.info(f"Wake event processed: {wav_path}")
+        
+    except Exception as e:
+        logger.error(f"Error processing wake event from MQTT: {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
@@ -70,20 +138,46 @@ async def startup_event():
     get_audio_buffer()
     get_wav_writer()
     
-    # Connect to MQTT broker
+    # Connect to MQTT broker (publisher)
     mqtt = get_mqtt_publisher()
     if mqtt.connect():
-        logger.info("MQTT connection established")
+        logger.info("MQTT publisher connection established")
     else:
-        logger.warning("Failed to connect to MQTT broker")
+        logger.warning("Failed to connect MQTT publisher to broker")
+    
+    # Connect to MQTT broker (subscriber)
+    subscriber = get_mqtt_subscriber()
+    
+    # Set up callbacks with asyncio-compatible wrappers
+    import asyncio
+    
+    def audio_callback(data: bytes):
+        """Sync wrapper for async audio handler."""
+        asyncio.create_task(handle_audio_data(data))
+    
+    def wake_callback(metadata: dict):
+        """Sync wrapper for async wake handler."""
+        asyncio.create_task(handle_wake_event(metadata))
+    
+    subscriber.set_audio_callback(audio_callback)
+    subscriber.set_wake_callback(wake_callback)
+    
+    if subscriber.connect():
+        logger.info("MQTT subscriber connection established")
+    else:
+        logger.warning("Failed to connect MQTT subscriber to broker")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
     logger.info("Shutting down Wake Word Audio Ingest Service...")
+    
     mqtt = get_mqtt_publisher()
     mqtt.disconnect()
+    
+    subscriber = get_mqtt_subscriber()
+    subscriber.disconnect()
 
 
 @app.get("/")
@@ -104,9 +198,11 @@ async def health():
     """Health check endpoint."""
     buffer = get_audio_buffer()
     mqtt = get_mqtt_publisher()
+    subscriber = get_mqtt_subscriber()
     return {
         "status": "healthy",
-        "mqtt_connected": mqtt.connected,
+        "mqtt_publisher_connected": mqtt.connected,
+        "mqtt_subscriber_connected": subscriber.connected,
         "buffer_samples": buffer.get_buffer_size(),
         "buffer_duration_seconds": buffer.get_duration()
     }

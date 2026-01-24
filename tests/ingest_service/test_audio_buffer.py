@@ -10,7 +10,7 @@ class TestAudioBuffer:
     
     async def test_init_default_params(self):
         """Test buffer initialization with default parameters."""
-        buffer = AudioBuffer(sample_rate=16000, buffer_duration=10.0)
+        buffer = AudioBuffer(sample_rate=16000, sample_width=2, buffer_duration=10.0)
         
         assert buffer.sample_rate == 16000
         assert buffer.buffer_duration == 10.0
@@ -19,7 +19,7 @@ class TestAudioBuffer:
     
     async def test_append_audio_data(self):
         """Test appending audio data to buffer."""
-        buffer = AudioBuffer(sample_rate=16000, buffer_duration=1.0)
+        buffer = AudioBuffer(sample_rate=16000, sample_width=2, buffer_duration=1.0)
         
         # Create test audio data (100 samples)
         test_data = np.array([i for i in range(100)], dtype=np.int16)
@@ -32,7 +32,7 @@ class TestAudioBuffer:
     
     async def test_append_multiple_chunks(self):
         """Test appending multiple chunks of audio data."""
-        buffer = AudioBuffer(sample_rate=16000, buffer_duration=1.0)
+        buffer = AudioBuffer(sample_rate=16000, sample_width=2, buffer_duration=1.0)
         
         # Append multiple chunks
         for i in range(5):
@@ -43,7 +43,7 @@ class TestAudioBuffer:
     
     async def test_circular_buffer_overflow(self):
         """Test that buffer respects max size (circular behavior)."""
-        buffer = AudioBuffer(sample_rate=100, buffer_duration=1.0)  # Max 100 samples
+        buffer = AudioBuffer(sample_rate=100, sample_width=2, buffer_duration=1.0)  # Max 100 samples
         
         # Append 150 samples
         test_data = np.array([i for i in range(150)], dtype=np.int16)
@@ -54,7 +54,7 @@ class TestAudioBuffer:
     
     async def test_get_clip_with_sufficient_data(self):
         """Test extracting a clip when buffer has sufficient data."""
-        buffer = AudioBuffer(sample_rate=100, buffer_duration=10.0)
+        buffer = AudioBuffer(sample_rate=100, sample_width=2, buffer_duration=10.0)
         
         # Add 500 samples (5 seconds of audio at 100 Hz)
         test_data = np.array([i for i in range(500)], dtype=np.int16)
@@ -70,7 +70,7 @@ class TestAudioBuffer:
     
     async def test_get_clip_with_insufficient_data(self):
         """Test extracting clip with insufficient buffer data."""
-        buffer = AudioBuffer(sample_rate=100, buffer_duration=10.0)
+        buffer = AudioBuffer(sample_rate=100, sample_width=2, buffer_duration=10.0)
         
         # Add only 50 samples
         test_data = np.array([i for i in range(50)], dtype=np.int16)
@@ -85,7 +85,7 @@ class TestAudioBuffer:
     
     async def test_get_clip_empty_buffer(self):
         """Test extracting clip from empty buffer."""
-        buffer = AudioBuffer(sample_rate=100, buffer_duration=10.0)
+        buffer = AudioBuffer(sample_rate=100, sample_width=2, buffer_duration=10.0)
         
         clip = await buffer.get_clip(pre_duration=1.0, post_duration=1.0)
         
@@ -93,7 +93,7 @@ class TestAudioBuffer:
     
     async def test_clear_buffer(self):
         """Test clearing the buffer."""
-        buffer = AudioBuffer(sample_rate=16000, buffer_duration=1.0)
+        buffer = AudioBuffer(sample_rate=16000, sample_width=2, buffer_duration=1.0)
         
         # Add some data
         test_data = np.array([i for i in range(100)], dtype=np.int16)
@@ -108,7 +108,7 @@ class TestAudioBuffer:
     
     async def test_get_duration(self):
         """Test getting buffer duration in seconds."""
-        buffer = AudioBuffer(sample_rate=1000, buffer_duration=10.0)
+        buffer = AudioBuffer(sample_rate=1000, sample_width=2, buffer_duration=10.0)
         
         # Add 500 samples (0.5 seconds at 1000 Hz)
         test_data = np.array([0] * 500, dtype=np.int16)
@@ -132,7 +132,7 @@ class TestAudioBuffer:
         """Test thread-safe concurrent access to buffer."""
         import asyncio
         
-        buffer = AudioBuffer(sample_rate=16000, buffer_duration=1.0)
+        buffer = AudioBuffer(sample_rate=16000, sample_width=2, buffer_duration=1.0)
         
         async def append_task():
             test_data = np.array([1] * 100, dtype=np.int16)
