@@ -78,6 +78,16 @@ micro_wake_word:
               topic: satellite1/audio_debug/meta/assistant1
               payload: '{"event":"wake","rate":48000,"bits":32,"channels":1}'
 
+# Publish audio configuration (retained message for multi-assistant support)
+# This allows the ingest service to configure buffers with correct audio parameters
+on_boot:
+  - priority: -100
+    then:
+      - mqtt.publish:
+          topic: satellite1/audio_debug/meta/assistant1/audio_info
+          payload: '{"sample_rate":48000,"bits_per_sample":32,"channels":1}'
+          retain: true
+
 # Debug Audio Switch
 switch:
   - platform: template

@@ -44,6 +44,7 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 ### Ingest Service
 - MQTT subscriber for base64-encoded audio chunks from ESPHome
 - **Multi-assistant audio buffering**: Separate audio buffers for each assistant ID
+- **Per-assistant audio configuration**: Dynamic audio parameters via MQTT retained messages
 - Real-time audio buffering (configurable duration)
 - Automatic wake event clip extraction on wake word detection
 - Wake event clip extraction (pre/post event audio)
@@ -232,12 +233,42 @@ Example wiring for INMP441 (as shown in example-config.yaml):
 The service automatically manages separate audio buffers for each assistant ID. When devices publish to topics like:
 - `satellite1/audio_debug/pcm/assistant1`
 - `satellite1/audio_debug/meta/assistant1`
+- `satellite1/audio_debug/meta/assistant1/audio_info` (retained)
 
 The service will:
 1. Extract the assistant ID (`assistant1`) from the topic
 2. Create and maintain a separate audio buffer for that assistant
 3. Route wake events to the correct assistant's buffer
 4. Include the assistant ID in saved clip metadata
+
+#### Per-Assistant Audio Configuration
+
+Each assistant can publish a retained message to `satellite1/audio_debug/meta/{assistant_id}/audio_info` containing its audio configuration:
+
+```json
+{
+  "sample_rate": 48000,
+  "bits_per_sample": 32,
+  "channels": 1
+}
+```
+
+This allows the service to:
+- Configure buffers with the correct audio parameters for each assistant
+- Support different audio formats simultaneously (e.g., one assistant at 16kHz/16-bit, another at 48kHz/32-bit)
+- Automatically create properly configured buffers when audio data arrives
+- Fall back to global defaults if no configuration is provided
+
+**Example ESPHome configuration:**
+```yaml
+on_boot:
+  - priority: -100
+    then:
+      - mqtt.publish:
+          topic: satellite1/audio_debug/meta/assistant1/audio_info
+          payload: '{"sample_rate":48000,"bits_per_sample":32,"channels":1}'
+          retain: true
+```
 
 ## Home Assistant Integration
 
