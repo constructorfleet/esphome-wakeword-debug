@@ -59,10 +59,11 @@ microphone:
 # Micro Wake Word Configuration
 micro_wake_word:
   id: mww
+  microphone: sat1_mics
   models:
-    - model: https://automation.home.prettybaked.com/local/hey_eddie/hey_eddie.json
+    - model: https://your-server.com/path/to/hey_eddie/hey_eddie.json
       id: hey_eddie
-    - model: https://automation.home.prettybaked.com/local/hey_eddie/hey_eddie.v3.0.json
+    - model: https://your-server.com/path/to/hey_eddie/hey_eddie.v3.0.json
       id: hey_eddie_v3_0
   on_wake_word_detected:
     - if:
@@ -79,3 +80,4 @@ switch:
     id: enable_audio_debug
     name: "Satellite1 Debug Audio"
     optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
