@@ -39,7 +39,7 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 - Micro wake word detection with configurable models
 - Conditional audio debug streaming via switch
 - Wake word event metadata publishing
-- **Multi-assistant support**: Publish to topics with assistant ID suffix (e.g., `satellite1/audio_debug/pcm/assistant1`)
+- **Multi-assistant support**: Publish to topics with assistant ID in the middle (e.g., `assist/debug/assistant1/pcm` matches pattern `assist/debug/+/pcm`)
 
 ### Ingest Service
 - MQTT subscriber for base64-encoded audio chunks from ESPHome
@@ -223,15 +223,15 @@ POST_WAKE_DURATION_SECONDS=3.0    # Audio after wake event
 MQTT_BROKER=mqtt           # MQTT broker hostname
 MQTT_PORT=1883            # MQTT broker port
 MQTT_TOPIC_PREFIX=wakeword/debug
-MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm   # Topic for base64 audio data from ESPHome (wildcard + will be added)
-MQTT_EVENT_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events from ESPHome (wildcard + will be added)
-MQTT_AUDIO_INFO_TOPIC=satellite1/audio_debug/audio_info  # Topic for audio info from ESPHome (wildcard + will be added)
+MQTT_AUDIO_TOPIC=assist/debug/+/pcm   # Pattern for audio data with wildcard
+MQTT_EVENT_TOPIC=assist/debug/+/events  # Pattern for wake word events with wildcard
+MQTT_AUDIO_INFO_TOPIC=assist/debug/+/audio_info  # Pattern for audio configuration with wildcard
 ```
 
-**Important:** The MQTT topics (`MQTT_AUDIO_TOPIC`, `MQTT_AUDIO_INFO_TOPIC` and `MQTT_EVENT_TOPIC`) in the `.env` file can the full topic or the base topic paths **without** the assistant ID. The service will automatically subscribe to these topics with a wildcard (`+`) to support multiple assistants if necessary. For example:
-- **Base topics** in `.env`: `satellite1/audio_debug/pcm` and `satellite1/audio_debug/meta`
-- **Actual subscriptions**: `satellite1/audio_debug/pcm/+` and `satellite1/audio_debug/meta/+`
-- **Device publishes to**: `satellite1/audio_debug/pcm/assistant1` and `satellite1/audio_debug/meta/assistant1`
+**Important:** The MQTT topics use wildcard patterns with `+` to match any assistant ID:
+- **Topic patterns** in `.env`: `assist/debug/+/pcm`, `assist/debug/+/events`, `assist/debug/+/audio_info`
+- **Service subscribes to**: These exact wildcard patterns
+- **Device publishes to**: `assist/debug/assistant1/pcm`, `assist/debug/assistant1/events`, `assist/debug/assistant1/audio_info`
 
 Each assistant ID gets its own separate audio buffer, so multiple assistants can be running simultaneously without audio mixing.
 
@@ -269,19 +269,19 @@ Example wiring for INMP441 (as shown in example-config.yaml):
 ### Multi-Assistant Support
 
 The service automatically manages separate audio buffers for each assistant ID. When devices publish to topics like:
-- `satellite1/audio_debug/assistant1/pcm`
-- `satellite1/audio_debug/assistant1/events`
-- `satellite1/audio_debug/assistant1/audio_info` (retained)
+- `assist/debug/assistant1/pcm`
+- `assist/debug/assistant1/events`
+- `assist/debug/assistant1/audio_info` (retained)
 
 The service will:
-1. Extract the assistant ID (`assistant1`) from the topic
+1. Extract the assistant ID (`assistant1`) from the topic using the wildcard pattern
 2. Create and maintain a separate audio buffer for that assistant
 3. Route wake events to the correct assistant's buffer
 4. Include the assistant ID in saved clip metadata
 
 #### Per-Assistant Audio Configuration
 
-Each assistant can publish a retained message to `satellite1/audio_debug/{assistant_id}/audio_info` containing its audio configuration:
+Each assistant can publish a retained message to `assist/debug/{assistant_id}/audio_info` containing its audio configuration:
 
 ```json
 {
@@ -303,7 +303,7 @@ on_boot:
   - priority: -100
     then:
       - mqtt.publish:
-          topic: satellite1/audio_debug/assistant1/audio_info
+          topic: assist/debug/assistant1/audio_info
           payload: '{"sample_rate":48000,"bits_per_sample":32,"channels":1}'
           retain: true
 ```
@@ -384,7 +384,7 @@ esphome-wakeword-debug/
 - Check I2S pin configuration in example-config.yaml
 - Ensure the "Satellite1 Debug Audio" switch is turned on in Home Assistant
 - View ESPHome logs: `esphome logs example-config.yaml`
-- Monitor MQTT topics: `mosquitto_sub -h localhost -t "satellite1/audio_debug/#" -v`
+- Monitor MQTT topics: `mosquitto_sub -h localhost -t "assist/debug/#" -v`
 
 ### Wake Word Not Detecting
 - Verify wake word model URLs are accessible
@@ -395,7 +395,7 @@ esphome-wakeword-debug/
 ### MQTT Not Working
 - Check MQTT broker is running: `docker-compose logs mqtt`
 - Verify MQTT broker address in example-config.yaml
-- Test MQTT connection: `mosquitto_sub -h localhost -t "satellite1/audio_debug/#" -v`
+- Test MQTT connection: `mosquitto_sub -h localhost -t "assist/debug/#" -v`
 - Verify MQTT credentials if authentication is enabled
 
 ## License

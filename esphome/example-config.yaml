@@ -8,7 +8,7 @@ esphome:
     - priority: -100
       then:
         - mqtt.publish:
-            topic: satellite1/audio_debug/assistant1/audio_info
+            topic: assist/debug/assistant1/audio_info
             payload: '{"sample_rate":48000,"bits_per_sample":32,"channels":1}'
             retain: true
 
@@ -61,9 +61,9 @@ microphone:
               - switch.is_on: enable_audio_debug
             then:
               - mqtt.publish:
-                  # For multi-assistant support, append assistant ID to topic
-                  # Example: satellite1/audio_debug/pcm/assistant1
-                  topic: satellite1/audio_debug/assistant1/pcm
+                  # For multi-assistant support, use pattern: assist/debug/{assistant_id}/pcm
+                  # This matches the wildcard pattern: assist/debug/+/pcm
+                  topic: assist/debug/assistant1/pcm
                   payload: !lambda |-
                     return esphome::base64_encode(x);
 
@@ -82,9 +82,9 @@ micro_wake_word:
           - switch.is_on: enable_audio_debug
         then:
           - mqtt.publish:
-              # For multi-assistant support, append same assistant ID to topic
-              # Must match the ID used in audio_debug/pcm topic above
-              topic: satellite1/audio_debug/assistant1/events
+              # For multi-assistant support, use pattern: assist/debug/{assistant_id}/events
+              # This matches the wildcard pattern: assist/debug/+/events
+              topic: assist/debug/assistant1/events
               payload: '{"event":"wake","rate":48000,"bits":32,"channels":1}'
 
 # Debug Audio Switch

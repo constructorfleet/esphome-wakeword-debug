@@ -189,58 +189,59 @@ class TestMQTTSubscriberMultiAssistant:
     def test_init_appends_wildcard_to_topics(self):
         """Test that subscriber adds wildcard to topics."""
         subscriber = MQTTSubscriber(
-            audio_topic="satellite1/audio_debug/pcm",
-            event_topic="satellite1/audio_debug/meta"
+            audio_topic="assist/debug/pcm",
+            event_topic="assist/debug/events"
         )
         
-        assert subscriber.audio_topic == "satellite1/audio_debug/pcm/+"
-        assert subscriber.event_topic == "satellite1/audio_debug/meta/+"
+        # Should add /+ to topics without wildcards
+        assert subscriber.audio_topic == "assist/debug/pcm/+"
+        assert subscriber.event_topic == "assist/debug/events/+"
     
     def test_init_preserves_existing_wildcard(self):
         """Test that subscriber preserves existing wildcard."""
         subscriber = MQTTSubscriber(
-            audio_topic="satellite1/audio_debug/pcm/+",
-            event_topic="satellite1/audio_debug/meta/+"
+            audio_topic="assist/debug/+/pcm",
+            event_topic="assist/debug/+/events"
         )
         
-        assert subscriber.audio_topic == "satellite1/audio_debug/pcm/+"
-        assert subscriber.event_topic == "satellite1/audio_debug/meta/+"
+        assert subscriber.audio_topic == "assist/debug/+/pcm"
+        assert subscriber.event_topic == "assist/debug/+/events"
     
     def test_extract_assistant_id_from_audio_topic(self):
         """Test extracting assistant ID from audio topic."""
         subscriber = MQTTSubscriber(
-            audio_topic="satellite1/audio_debug/pcm"
+            audio_topic="assist/debug/+/pcm"
         )
         
         assistant_id = subscriber._extract_assistant_id(
-            "satellite1/audio_debug/pcm/assistant1",
-            "satellite1/audio_debug/pcm"
+            "assist/debug/assistant1/pcm",
+            "assist/debug/+/pcm"
         )
         
         assert assistant_id == "assistant1"
     
     def test_extract_assistant_id_from_event_topic(self):
-        """Test extracting assistant ID from meta topic."""
+        """Test extracting assistant ID from event topic."""
         subscriber = MQTTSubscriber(
-            event_topic="satellite1/audio_debug/meta"
+            event_topic="assist/debug/+/events"
         )
         
         assistant_id = subscriber._extract_assistant_id(
-            "satellite1/audio_debug/meta/assistant2",
-            "satellite1/audio_debug/meta"
+            "assist/debug/assistant2/events",
+            "assist/debug/+/events"
         )
         
         assert assistant_id == "assistant2"
     
     def test_extract_assistant_id_missing(self):
-        """Test extracting assistant ID when not present."""
+        """Test extracting assistant ID when topic doesn't match pattern."""
         subscriber = MQTTSubscriber(
-            audio_topic="satellite1/audio_debug/pcm"
+            audio_topic="assist/debug/+/pcm"
         )
         
         assistant_id = subscriber._extract_assistant_id(
-            "satellite1/audio_debug/pcm",
-            "satellite1/audio_debug/pcm"
+            "assist/debug/pcm",  # Missing assistant ID
+            "assist/debug/+/pcm"
         )
         
         assert assistant_id is None
@@ -248,12 +249,12 @@ class TestMQTTSubscriberMultiAssistant:
     def test_extract_assistant_id_wrong_base(self):
         """Test extracting assistant ID with wrong base topic."""
         subscriber = MQTTSubscriber(
-            audio_topic="satellite1/audio_debug/pcm"
+            audio_topic="assist/debug/+/pcm"
         )
         
         assistant_id = subscriber._extract_assistant_id(
-            "satellite2/audio_debug/pcm/assistant1",
-            "satellite1/audio_debug/pcm"
+            "other/debug/assistant1/pcm",
+            "assist/debug/+/pcm"
         )
         
         assert assistant_id is None
@@ -261,12 +262,12 @@ class TestMQTTSubscriberMultiAssistant:
     def test_extract_assistant_id_from_audio_info_topic(self):
         """Test extracting assistant ID from audio_info topic."""
         subscriber = MQTTSubscriber(
-            event_topic="satellite1/audio_debug/meta"
+            audio_info_topic="assist/debug/+/audio_info"
         )
         
         assistant_id = subscriber._extract_assistant_id(
-            "satellite1/audio_debug/meta/assistant1/audio_info",
-            "satellite1/audio_debug/meta"
+            "assist/debug/assistant1/audio_info",
+            "assist/debug/+/audio_info"
         )
         
         assert assistant_id == "assistant1"
@@ -274,7 +275,7 @@ class TestMQTTSubscriberMultiAssistant:
     def test_audio_info_topic_initialization(self):
         """Test that audio_info topic is properly initialized."""
         subscriber = MQTTSubscriber(
-            event_topic="satellite1/audio_debug/meta"
+            audio_info_topic="assist/debug/+/audio_info"
         )
         
-        assert subscriber.audio_info_topic == "satellite1/audio_debug/meta/+/audio_info"
+        assert subscriber.audio_info_topic == "assist/debug/+/audio_info"

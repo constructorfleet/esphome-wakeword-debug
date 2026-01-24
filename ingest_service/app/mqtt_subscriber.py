@@ -131,35 +131,34 @@ class MQTTSubscriber:
         """
         Perform regular expression match against a topic.
         Args:
-            topic: Full MQTT topic (e.g., "satellite1/audio_debug/pcm/assistant1")
-            base_topic: Base topic path (e.g., "satellite1/audio_debug/pcm")
+            topic: Full MQTT topic (e.g., "assist/debug/assistant1/pcm")
+            base_topic: Base topic pattern with wildcard (e.g., "assist/debug/+/pcm")
         
         Returns:
             re.Match or None if not found
         """
-        pattern = re.compile(base_topic.replace('+', '(.+?)'))
+        # Escape special regex characters except +
+        pattern_str = re.escape(base_topic).replace(r'\+', '([^/]+)')
+        pattern = re.compile(f"^{pattern_str}$")
         match = pattern.match(topic)
-        if not match:
-            return None
         return match
     
     def _extract_assistant_id(self, topic: str, base_topic: str) -> Optional[str]:
         """
-        Extract assistant ID from topic path.
+        Extract assistant ID from topic path using wildcard pattern matching.
         
         Args:
-            topic: Full MQTT topic (e.g., "satellite1/audio_debug/pcm/assistant1")
-            base_topic: Base topic path (e.g., "satellite1/audio_debug/pcm")
+            topic: Full MQTT topic (e.g., "assist/debug/assistant1/pcm")
+            base_topic: Base topic pattern with wildcard (e.g., "assist/debug/+/pcm")
         
         Returns:
             Assistant ID or None if not found
         """
-        # Remove base topic prefix and extract the ID
         match = self._match_topic(topic, base_topic)
         if not match:
             return None
-        assistant_id = match.group(1):
-        return assistant_id if assistant_id or None
+        assistant_id = match.group(1)
+        return assistant_id if assistant_id else None
     
     def _on_message(self, client, userdata, msg):
         """Callback for when a message is received."""
