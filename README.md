@@ -39,9 +39,11 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 - Micro wake word detection with configurable models
 - Conditional audio debug streaming via switch
 - Wake word event metadata publishing
+- **Multi-assistant support**: Publish to topics with assistant ID suffix (e.g., `satellite1/audio_debug/pcm/assistant1`)
 
 ### Ingest Service
 - MQTT subscriber for base64-encoded audio chunks from ESPHome
+- **Multi-assistant audio buffering**: Separate audio buffers for each assistant ID
 - Real-time audio buffering (configurable duration)
 - Automatic wake event clip extraction on wake word detection
 - Wake event clip extraction (pre/post event audio)
@@ -144,14 +146,20 @@ esphome run example-config.yaml
 Use the REST API to capture audio clips:
 
 ```bash
-# Trigger a wake event (captures 2s pre + 3s post)
+# Trigger a wake event (captures 2s pre + 3s post) for default assistant
 curl -X POST http://localhost:8000/wake_event
+
+# Trigger for specific assistant
+curl -X POST "http://localhost:8000/wake_event?assistant_id=assistant1"
 
 # Custom duration
 curl -X POST "http://localhost:8000/wake_event?pre_duration=3.0&post_duration=5.0"
 
 # Check service health
 curl http://localhost:8000/health
+
+# View active assistants
+curl http://localhost:8000/
 ```
 
 Audio clips are saved to `./audio_clips/` directory.
@@ -177,13 +185,16 @@ POST_WAKE_DURATION_SECONDS=3.0    # Audio after wake event
 MQTT_BROKER=mqtt           # MQTT broker hostname
 MQTT_PORT=1883            # MQTT broker port
 MQTT_TOPIC_PREFIX=wakeword/debug
-MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm   # Topic for base64 audio data from ESPHome
-MQTT_META_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events from ESPHome
+MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm   # Topic for base64 audio data from ESPHome (wildcard + will be added)
+MQTT_META_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events from ESPHome (wildcard + will be added)
 ```
 
-**Important:** The MQTT topics (`MQTT_AUDIO_TOPIC` and `MQTT_META_TOPIC`) in the `.env` file must match the topics configured in your `example-config.yaml`:
-- Audio data is published to `satellite1/audio_debug/pcm` in the microphone's `on_data` action
-- Wake word metadata is published to `satellite1/audio_debug/meta` in the `on_wake_word_detected` action
+**Important:** The MQTT topics (`MQTT_AUDIO_TOPIC` and `MQTT_META_TOPIC`) in the `.env` file should be the base topic paths **without** the assistant ID. The service will automatically subscribe to these topics with a wildcard (`+`) to support multiple assistants. For example:
+- **Base topics** in `.env`: `satellite1/audio_debug/pcm` and `satellite1/audio_debug/meta`
+- **Actual subscriptions**: `satellite1/audio_debug/pcm/+` and `satellite1/audio_debug/meta/+`
+- **Device publishes to**: `satellite1/audio_debug/pcm/assistant1` and `satellite1/audio_debug/meta/assistant1`
+
+Each assistant ID gets its own separate audio buffer, so multiple assistants can be running simultaneously without audio mixing.
 
 ### I2S Microphone Wiring
 
@@ -201,19 +212,32 @@ Example wiring for INMP441 (as shown in example-config.yaml):
 
 ## API Endpoints
 
-**Note:** The ingest service currently supports WebSocket audio streaming. With the new MQTT-based approach, the service can be extended to subscribe to MQTT topics for audio data instead of/in addition to WebSocket connections.
+**Note:** The ingest service supports both WebSocket audio streaming (legacy) and MQTT-based streaming with multi-assistant support.
 
 ### WebSocket (Legacy)
-- `ws://host:8000/ws/audio` - Audio streaming endpoint
+- `ws://host:8000/ws/audio` - Audio streaming endpoint (single stream, no assistant separation)
 
 ### REST API
-- `GET /` - Service information
-- `GET /health` - Health check
+- `GET /` - Service information (includes list of active assistants)
+- `GET /health` - Health check (includes active assistant count)
 - `POST /wake_event` - Trigger wake event and save clip
-  - Query params: `pre_duration`, `post_duration`
+  - Query params: `assistant_id` (default: "default"), `pre_duration`, `post_duration`
 - `POST /clear_buffer` - Clear audio buffer
+  - Query params: `assistant_id` (optional - clears specific assistant or all if omitted)
 - `POST /cleanup` - Cleanup old WAV files
   - Query params: `max_age_days`
+
+### Multi-Assistant Support
+
+The service automatically manages separate audio buffers for each assistant ID. When devices publish to topics like:
+- `satellite1/audio_debug/pcm/assistant1`
+- `satellite1/audio_debug/meta/assistant1`
+
+The service will:
+1. Extract the assistant ID (`assistant1`) from the topic
+2. Create and maintain a separate audio buffer for that assistant
+3. Route wake events to the correct assistant's buffer
+4. Include the assistant ID in saved clip metadata
 
 ## Home Assistant Integration
 

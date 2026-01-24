@@ -52,7 +52,9 @@ microphone:
               - switch.is_on: enable_audio_debug
             then:
               - mqtt.publish:
-                  topic: satellite1/audio_debug/pcm
+                  # For multi-assistant support, append assistant ID to topic
+                  # Example: satellite1/audio_debug/pcm/assistant1
+                  topic: satellite1/audio_debug/pcm/assistant1
                   payload: !lambda |-
                     return esphome::base64_encode(x);
 
@@ -71,7 +73,9 @@ micro_wake_word:
           - switch.is_on: enable_audio_debug
         then:
           - mqtt.publish:
-              topic: satellite1/audio_debug/meta
+              # For multi-assistant support, append same assistant ID to topic
+              # Must match the ID used in audio_debug/pcm topic above
+              topic: satellite1/audio_debug/meta/assistant1
               payload: '{"event":"wake","rate":48000,"bits":32,"channels":1}'
 
 # Debug Audio Switch
