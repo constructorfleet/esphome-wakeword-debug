@@ -1,6 +1,8 @@
 import os
 import wave
 import logging
+import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -92,7 +94,6 @@ class WAVWriter:
         metadata_path = wav_path.with_suffix('.json')
         
         try:
-            import json
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f, indent=2)
             logger.debug(f"Wrote metadata: {metadata_path.name}")
@@ -109,8 +110,6 @@ class WAVWriter:
         Returns:
             Number of files deleted
         """
-        import time
-        
         deleted_count = 0
         current_time = time.time()
         max_age_seconds = max_age_days * 86400
