@@ -77,7 +77,7 @@ curl http://localhost:8000/health
 
 ### 2. Configure ESPHome Device
 
-Edit `esphome/example-config.yaml`:
+Edit `esphome/example-config.yaml` with your specific settings:
 
 ```yaml
 # Update with your WiFi credentials
@@ -85,24 +85,51 @@ wifi:
   ssid: "YOUR_WIFI_SSID"
   password: "YOUR_WIFI_PASSWORD"
 
-# Update with your MQTT broker details
+# Update with your MQTT broker details (IP address or hostname)
 mqtt:
-  broker: "YOUR_MQTT_BROKER"
+  broker: "YOUR_MQTT_BROKER"  # e.g., "192.168.1.100" or "mqtt.local"
   port: 1883
   username: "YOUR_MQTT_USERNAME"
   password: "YOUR_MQTT_PASSWORD"
 
+# Update API and OTA keys
+api:
+  encryption:
+    key: "YOUR_API_ENCRYPTION_KEY"
+
+ota:
+  password: "YOUR_OTA_PASSWORD"
+
 # Update microphone I2S pins for your wiring
 microphone:
   - platform: i2s_audio
-    i2s_din_pin: 26  # Adjust for your wiring
-    # Additional configuration in the example file
+    id: sat1_mics
+    i2s_din_pin: GPIO26      # Data pin (SD on INMP441)
+    i2s_bclk_pin: GPIO33     # Bit clock (SCK on INMP441)
+    i2s_lrclk_pin: GPIO25    # Left/Right clock (WS on INMP441)
+    adc_type: external
+    pdm: false
+    channel: left
+    sample_rate: 48000       # Must match SAMPLE_RATE in .env
+    bits_per_sample: 32bit   # Must match SAMPLE_WIDTH (4 bytes = 32 bits)
 
-# Configure wake word models
+# Configure wake word models (update URLs to your model files)
 micro_wake_word:
+  id: mww
+  microphone: sat1_mics
   models:
-    - model: https://your-server.com/path/to/model.json
-      id: your_model
+    - model: https://your-server.com/path/to/hey_eddie/hey_eddie.json
+      id: hey_eddie
+    - model: https://your-server.com/path/to/hey_eddie/hey_eddie.v3.0.json
+      id: hey_eddie_v3_0
+
+# Debug audio switch (enables audio streaming to MQTT)
+switch:
+  - platform: template
+    id: enable_audio_debug
+    name: "Satellite1 Debug Audio"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
 ```
 
 ### 3. Flash ESP32 Device
@@ -136,9 +163,9 @@ Audio clips are saved to `./audio_clips/` directory.
 Copy `.env.example` to `.env` and customize:
 
 ```bash
-# Audio settings (match ESPHome configuration)
-SAMPLE_RATE=48000          # Sample rate in Hz (48kHz to match ESPHome)
-SAMPLE_WIDTH=4             # Bytes per sample (4=32bit to match ESPHome)
+# Audio settings (must match ESPHome configuration)
+SAMPLE_RATE=48000          # Sample rate in Hz (48kHz to match example-config.yaml)
+SAMPLE_WIDTH=4             # Bytes per sample (4=32bit to match example-config.yaml)
 CHANNELS=1                 # Number of audio channels
 
 # Buffer settings
@@ -150,13 +177,17 @@ POST_WAKE_DURATION_SECONDS=3.0    # Audio after wake event
 MQTT_BROKER=mqtt           # MQTT broker hostname
 MQTT_PORT=1883            # MQTT broker port
 MQTT_TOPIC_PREFIX=wakeword/debug
-MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm   # Topic for base64 audio data
-MQTT_META_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events
+MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm   # Topic for base64 audio data from ESPHome
+MQTT_META_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events from ESPHome
 ```
+
+**Important:** The MQTT topics (`MQTT_AUDIO_TOPIC` and `MQTT_META_TOPIC`) in the `.env` file must match the topics configured in your `example-config.yaml`:
+- Audio data is published to `satellite1/audio_debug/pcm` in the microphone's `on_data` action
+- Wake word metadata is published to `satellite1/audio_debug/meta` in the `on_wake_word_detected` action
 
 ### I2S Microphone Wiring
 
-Example wiring for INMP441:
+Example wiring for INMP441 (as shown in example-config.yaml):
 
 | INMP441 Pin | ESP32 Pin  | Config Parameter | Description      |
 |-------------|------------|------------------|------------------|
@@ -165,6 +196,8 @@ Example wiring for INMP441:
 | SD          | GPIO 26    | i2s_din_pin      | Data In          |
 | WS          | GPIO 25    | i2s_lrclk_pin    | Word Select/LR   |
 | SCK         | GPIO 33    | i2s_bclk_pin     | Bit Clock        |
+
+**Note:** These are the default pins used in `example-config.yaml`. Adjust them in your configuration if your wiring is different.
 
 ## API Endpoints
 
