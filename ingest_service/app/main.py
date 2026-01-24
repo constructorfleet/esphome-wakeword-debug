@@ -35,6 +35,9 @@ mqtt_subscriber: Optional[MQTTSubscriber] = None
 # Track active websocket connections
 active_connections: list[WebSocket] = []
 
+# Store reference to main event loop for thread-safe task scheduling
+main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+
 
 def get_audio_buffer() -> AudioBuffer:
     """Get or create audio buffer instance."""
@@ -129,6 +132,11 @@ async def handle_wake_event(metadata: dict) -> None:
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
+    global main_event_loop
+    
+    # Store reference to the main event loop
+    main_event_loop = asyncio.get_running_loop()
+    
     logger.info("Starting Wake Word Audio Ingest Service...")
     logger.info(f"Server: {settings.HOST}:{settings.PORT}")
     logger.info(f"Sample Rate: {settings.SAMPLE_RATE} Hz")
@@ -149,14 +157,16 @@ async def startup_event():
     # Connect to MQTT broker (subscriber)
     subscriber = get_mqtt_subscriber()
     
-    # Set up callbacks with asyncio-compatible wrappers
+    # Set up callbacks with thread-safe asyncio wrappers
     def audio_callback(data: bytes):
-        """Sync wrapper for async audio handler."""
-        asyncio.create_task(handle_audio_data(data))
+        """Thread-safe wrapper for async audio handler."""
+        if main_event_loop and not main_event_loop.is_closed():
+            asyncio.run_coroutine_threadsafe(handle_audio_data(data), main_event_loop)
     
     def wake_callback(metadata: dict):
-        """Sync wrapper for async wake handler."""
-        asyncio.create_task(handle_wake_event(metadata))
+        """Thread-safe wrapper for async wake handler."""
+        if main_event_loop and not main_event_loop.is_closed():
+            asyncio.run_coroutine_threadsafe(handle_wake_event(metadata), main_event_loop)
     
     subscriber.set_audio_callback(audio_callback)
     subscriber.set_wake_callback(wake_callback)
