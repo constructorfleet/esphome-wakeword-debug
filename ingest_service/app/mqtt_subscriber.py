@@ -27,27 +27,31 @@ class MQTTSubscriber:
         self.username = username
         self.password = password
         self.client_id = client_id
-        self.audio_topic = audio_topic
-        self.meta_topic = meta_topic
+        # Support wildcard topics for multiple assistants
+        self.audio_topic = audio_topic if audio_topic.endswith('/+') else f"{audio_topic}/+"
+        self.meta_topic = meta_topic if meta_topic.endswith('/+') else f"{meta_topic}/+"
+        # Store base topics for pattern matching
+        self.audio_topic_base = audio_topic.rstrip('/+')
+        self.meta_topic_base = meta_topic.rstrip('/+')
         
         self.client: Optional[mqtt.Client] = None
         self.connected = False
         
         # Callbacks for handling messages
-        self.audio_callback: Optional[Callable[[bytes], None]] = None
-        self.wake_callback: Optional[Callable[[dict], None]] = None
+        self.audio_callback: Optional[Callable[[str, bytes], None]] = None
+        self.wake_callback: Optional[Callable[[str, dict], None]] = None
         
         logger.info(
             f"MQTTSubscriber initialized: broker={broker}:{port}, "
-            f"audio_topic={audio_topic}, meta_topic={meta_topic}"
+            f"audio_topic={self.audio_topic}, meta_topic={self.meta_topic}"
         )
     
-    def set_audio_callback(self, callback: Callable[[bytes], None]) -> None:
-        """Set callback for handling audio data."""
+    def set_audio_callback(self, callback: Callable[[str, bytes], None]) -> None:
+        """Set callback for handling audio data with assistant ID."""
         self.audio_callback = callback
     
-    def set_wake_callback(self, callback: Callable[[dict], None]) -> None:
-        """Set callback for handling wake word events."""
+    def set_wake_callback(self, callback: Callable[[str, dict], None]) -> None:
+        """Set callback for handling wake word events with assistant ID."""
         self.wake_callback = callback
     
     def connect(self) -> bool:
@@ -113,30 +117,61 @@ class MQTTSubscriber:
         else:
             logger.info("MQTT Subscriber disconnected from broker")
     
+    def _extract_assistant_id(self, topic: str, base_topic: str) -> Optional[str]:
+        """
+        Extract assistant ID from topic path.
+        
+        Args:
+            topic: Full MQTT topic (e.g., "satellite1/audio_debug/pcm/assistant1")
+            base_topic: Base topic path (e.g., "satellite1/audio_debug/pcm")
+        
+        Returns:
+            Assistant ID or None if not found
+        """
+        # Remove base topic prefix and extract the ID
+        if topic.startswith(base_topic + '/'):
+            assistant_id = topic[len(base_topic) + 1:]
+            return assistant_id if assistant_id else None
+        return None
+    
     def _on_message(self, client, userdata, msg):
         """Callback for when a message is received."""
         try:
-            if msg.topic == self.audio_topic:
+            # Check if this is an audio topic
+            if msg.topic.startswith(self.audio_topic_base):
+                # Extract assistant ID from topic
+                assistant_id = self._extract_assistant_id(msg.topic, self.audio_topic_base)
+                if not assistant_id:
+                    logger.warning(f"Could not extract assistant ID from topic: {msg.topic}")
+                    return
+                
                 # Handle audio data (base64 encoded)
                 if self.audio_callback:
                     try:
                         # Decode base64 audio data
                         audio_data = base64.b64decode(msg.payload)
-                        self.audio_callback(audio_data)
+                        self.audio_callback(assistant_id, audio_data)
                     except Exception as e:
-                        logger.error(f"Error decoding audio data: {e}")
+                        logger.error(f"Error decoding audio data for assistant {assistant_id}: {e}")
                 else:
                     logger.warning("Received audio data but no callback set")
             
-            elif msg.topic == self.meta_topic:
+            # Check if this is a meta topic
+            elif msg.topic.startswith(self.meta_topic_base):
+                # Extract assistant ID from topic
+                assistant_id = self._extract_assistant_id(msg.topic, self.meta_topic_base)
+                if not assistant_id:
+                    logger.warning(f"Could not extract assistant ID from topic: {msg.topic}")
+                    return
+                
                 # Handle wake word metadata
                 if self.wake_callback:
                     try:
                         # Parse JSON metadata
                         metadata = json.loads(msg.payload)
-                        self.wake_callback(metadata)
+                        self.wake_callback(assistant_id, metadata)
                     except Exception as e:
-                        logger.error(f"Error parsing wake metadata: {e}")
+                        logger.error(f"Error parsing wake metadata for assistant {assistant_id}: {e}")
                 else:
                     logger.warning("Received wake metadata but no callback set")
         

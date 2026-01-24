@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections import deque
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 import numpy as np
 
 from .config import settings
@@ -137,3 +137,120 @@ class AudioBuffer:
     def get_duration(self) -> float:
         """Get current duration of audio in buffer (seconds)."""
         return len(self.buffer) / self.sample_rate
+
+
+class MultiAssistantAudioBuffer:
+    """
+    Manages multiple AudioBuffer instances, one per assistant ID.
+    """
+    
+    def __init__(
+        self,
+        sample_rate: int = settings.SAMPLE_RATE,
+        sample_width: int = settings.SAMPLE_WIDTH,
+        channels: int = settings.CHANNELS,
+        buffer_duration: float = settings.BUFFER_DURATION_SECONDS
+    ):
+        self.sample_rate = sample_rate
+        self.sample_width = sample_width
+        self.channels = channels
+        self.buffer_duration = buffer_duration
+        
+        # Dictionary to hold buffers per assistant ID
+        self.buffers: Dict[str, AudioBuffer] = {}
+        self.lock = asyncio.Lock()
+        
+        logger.info(
+            f"MultiAssistantAudioBuffer initialized: {sample_rate}Hz, "
+            f"{sample_width * 8}-bit, {channels} channel(s), "
+            f"{buffer_duration}s capacity per assistant"
+        )
+    
+    async def get_buffer(self, assistant_id: str) -> AudioBuffer:
+        """
+        Get or create a buffer for a specific assistant ID.
+        
+        Args:
+            assistant_id: Unique identifier for the assistant
+        
+        Returns:
+            AudioBuffer instance for the assistant
+        """
+        async with self.lock:
+            if assistant_id not in self.buffers:
+                logger.info(f"Creating new buffer for assistant: {assistant_id}")
+                self.buffers[assistant_id] = AudioBuffer(
+                    sample_rate=self.sample_rate,
+                    sample_width=self.sample_width,
+                    channels=self.channels,
+                    buffer_duration=self.buffer_duration
+                )
+            return self.buffers[assistant_id]
+    
+    async def append(self, assistant_id: str, audio_data: bytes) -> None:
+        """
+        Append audio data to a specific assistant's buffer.
+        
+        Args:
+            assistant_id: Unique identifier for the assistant
+            audio_data: Raw PCM audio bytes
+        """
+        buffer = await self.get_buffer(assistant_id)
+        await buffer.append(audio_data)
+    
+    async def get_clip(
+        self,
+        assistant_id: str,
+        pre_duration: float = settings.PRE_WAKE_DURATION_SECONDS,
+        post_duration: float = settings.POST_WAKE_DURATION_SECONDS,
+        trigger_offset: Optional[float] = None
+    ) -> Optional[np.ndarray]:
+        """
+        Extract a clip from a specific assistant's buffer.
+        
+        Args:
+            assistant_id: Unique identifier for the assistant
+            pre_duration: Seconds of audio before the trigger point
+            post_duration: Seconds of audio after the trigger point
+            trigger_offset: Offset from the current position (None = now)
+        
+        Returns:
+            numpy array of audio samples, or None if insufficient data
+        """
+        buffer = await self.get_buffer(assistant_id)
+        return await buffer.get_clip(pre_duration, post_duration, trigger_offset)
+    
+    async def clear(self, assistant_id: Optional[str] = None) -> None:
+        """
+        Clear buffer(s).
+        
+        Args:
+            assistant_id: Specific assistant to clear, or None to clear all
+        """
+        async with self.lock:
+            if assistant_id is None:
+                # Clear all buffers
+                for buffer in self.buffers.values():
+                    await buffer.clear()
+                logger.info("All assistant buffers cleared")
+            elif assistant_id in self.buffers:
+                await self.buffers[assistant_id].clear()
+    
+    def get_buffer_size(self, assistant_id: Optional[str] = None) -> int:
+        """Get total number of samples across all assistants or for specific assistant."""
+        if assistant_id and assistant_id in self.buffers:
+            return self.buffers[assistant_id].get_buffer_size()
+        return sum(buffer.get_buffer_size() for buffer in self.buffers.values())
+    
+    def get_duration(self, assistant_id: Optional[str] = None) -> float:
+        """Get total duration across all assistants or for specific assistant."""
+        if assistant_id and assistant_id in self.buffers:
+            return self.buffers[assistant_id].get_duration()
+        # Return average duration across all buffers
+        if not self.buffers:
+            return 0.0
+        return sum(buffer.get_duration() for buffer in self.buffers.values()) / len(self.buffers)
+    
+    def get_assistant_ids(self) -> list[str]:
+        """Get list of all assistant IDs with active buffers."""
+        return list(self.buffers.keys())

@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 import uvicorn
 
 from .config import settings
-from .audio_buffer import AudioBuffer
+from .audio_buffer import AudioBuffer, MultiAssistantAudioBuffer
 from .wav_writer import WAVWriter
 from .mqtt_publisher import MQTTPublisher
 from .mqtt_subscriber import MQTTSubscriber
@@ -27,7 +27,7 @@ app = FastAPI(
 )
 
 # Initialize components (lazy initialization)
-audio_buffer: Optional[AudioBuffer] = None
+audio_buffer: Optional[MultiAssistantAudioBuffer] = None
 wav_writer: Optional[WAVWriter] = None
 mqtt_publisher: Optional[MQTTPublisher] = None
 mqtt_subscriber: Optional[MQTTSubscriber] = None
@@ -41,11 +41,11 @@ active_connections: list[WebSocket] = []
 main_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
-def get_audio_buffer() -> AudioBuffer:
+def get_audio_buffer() -> MultiAssistantAudioBuffer:
     """Get or create audio buffer instance."""
     global audio_buffer
     if audio_buffer is None:
-        audio_buffer = AudioBuffer()
+        audio_buffer = MultiAssistantAudioBuffer()
     return audio_buffer
 
 
@@ -73,16 +73,16 @@ def get_mqtt_subscriber() -> MQTTSubscriber:
     return mqtt_subscriber
 
 
-async def handle_audio_data(audio_data: bytes) -> None:
+async def handle_audio_data(assistant_id: str, audio_data: bytes) -> None:
     """Handle incoming audio data from MQTT."""
     buffer = get_audio_buffer()
-    await buffer.append(audio_data)
-    logger.debug(f"Received {len(audio_data)} bytes of audio data")
+    await buffer.append(assistant_id, audio_data)
+    logger.debug(f"Received {len(audio_data)} bytes of audio data for assistant {assistant_id}")
 
 
-async def handle_wake_event(metadata: dict) -> None:
+async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
     """Handle wake word event from MQTT."""
-    logger.info(f"Wake word detected: {metadata}")
+    logger.info(f"Wake word detected for assistant {assistant_id}: {metadata}")
     
     # Check if this is a wake event
     if metadata.get("event") != "wake":
@@ -97,20 +97,22 @@ async def handle_wake_event(metadata: dict) -> None:
         pre_duration = settings.PRE_WAKE_DURATION_SECONDS
         post_duration = settings.POST_WAKE_DURATION_SECONDS
         
-        # Extract clip from buffer
+        # Extract clip from buffer for this assistant
         clip = await buffer.get_clip(
+            assistant_id=assistant_id,
             pre_duration=pre_duration,
             post_duration=post_duration
         )
         
         if clip is None:
-            logger.warning("Insufficient audio data in buffer for wake event")
+            logger.warning(f"Insufficient audio data in buffer for assistant {assistant_id}")
             return
         
         # Create metadata
         timestamp = datetime.utcnow().isoformat()
         clip_metadata = {
             "timestamp": timestamp,
+            "assistant_id": assistant_id,
             "pre_duration": pre_duration,
             "post_duration": post_duration,
             "sample_rate": settings.SAMPLE_RATE,
@@ -125,10 +127,10 @@ async def handle_wake_event(metadata: dict) -> None:
         # Publish MQTT event
         mqtt.publish_wake_event(wav_path, clip_metadata)
         
-        logger.info(f"Wake event processed: {wav_path}")
+        logger.info(f"Wake event processed for assistant {assistant_id}: {wav_path}")
         
     except Exception as e:
-        logger.error(f"Error processing wake event from MQTT: {e}")
+        logger.error(f"Error processing wake event from MQTT for assistant {assistant_id}: {e}")
 
 
 @app.on_event("startup")
@@ -160,15 +162,15 @@ async def startup_event():
     subscriber = get_mqtt_subscriber()
     
     # Set up callbacks with thread-safe asyncio wrappers
-    def audio_callback(data: bytes):
+    def audio_callback(assistant_id: str, data: bytes):
         """Thread-safe wrapper for async audio handler."""
         if main_event_loop and not main_event_loop.is_closed():
-            asyncio.run_coroutine_threadsafe(handle_audio_data(data), main_event_loop)
+            asyncio.run_coroutine_threadsafe(handle_audio_data(assistant_id, data), main_event_loop)
     
-    def wake_callback(metadata: dict):
+    def wake_callback(assistant_id: str, metadata: dict):
         """Thread-safe wrapper for async wake handler."""
         if main_event_loop and not main_event_loop.is_closed():
-            asyncio.run_coroutine_threadsafe(handle_wake_event(metadata), main_event_loop)
+            asyncio.run_coroutine_threadsafe(handle_wake_event(assistant_id, metadata), main_event_loop)
     
     subscriber.set_audio_callback(audio_callback)
     subscriber.set_wake_callback(wake_callback)
@@ -200,7 +202,8 @@ async def root():
         "version": "1.0.0",
         "status": "running",
         "buffer_duration": buffer.get_duration(),
-        "active_connections": len(active_connections)
+        "active_connections": len(active_connections),
+        "active_assistants": buffer.get_assistant_ids()
     }
 
 
@@ -215,12 +218,14 @@ async def health():
         "mqtt_publisher_connected": mqtt.connected,
         "mqtt_subscriber_connected": subscriber.connected,
         "buffer_samples": buffer.get_buffer_size(),
-        "buffer_duration_seconds": buffer.get_duration()
+        "buffer_duration_seconds": buffer.get_duration(),
+        "active_assistants": buffer.get_assistant_ids()
     }
 
 
 @app.post("/wake_event")
 async def trigger_wake_event(
+    assistant_id: str = "default",
     pre_duration: float = settings.PRE_WAKE_DURATION_SECONDS,
     post_duration: float = settings.POST_WAKE_DURATION_SECONDS
 ):
@@ -228,6 +233,7 @@ async def trigger_wake_event(
     Manually trigger a wake event to capture and save an audio clip.
     
     Args:
+        assistant_id: Assistant ID to capture audio from
         pre_duration: Seconds of audio before the event
         post_duration: Seconds of audio after the event
     
@@ -239,8 +245,9 @@ async def trigger_wake_event(
         writer = get_wav_writer()
         mqtt = get_mqtt_publisher()
         
-        # Extract clip from buffer
+        # Extract clip from buffer for this assistant
         clip = await buffer.get_clip(
+            assistant_id=assistant_id,
             pre_duration=pre_duration,
             post_duration=post_duration
         )
@@ -248,13 +255,14 @@ async def trigger_wake_event(
         if clip is None:
             raise HTTPException(
                 status_code=400,
-                detail="Insufficient audio data in buffer"
+                detail=f"Insufficient audio data in buffer for assistant {assistant_id}"
             )
         
         # Create metadata
         timestamp = datetime.utcnow().isoformat()
         metadata = {
             "timestamp": timestamp,
+            "assistant_id": assistant_id,
             "pre_duration": pre_duration,
             "post_duration": post_duration,
             "sample_rate": settings.SAMPLE_RATE,
@@ -268,7 +276,7 @@ async def trigger_wake_event(
         # Publish MQTT event
         mqtt_published = mqtt.publish_wake_event(wav_path, metadata)
         
-        logger.info(f"Wake event processed: {wav_path}")
+        logger.info(f"Wake event processed for assistant {assistant_id}: {wav_path}")
         
         return {
             "success": True,
@@ -285,11 +293,18 @@ async def trigger_wake_event(
 
 
 @app.post("/clear_buffer")
-async def clear_buffer():
-    """Clear the audio buffer."""
+async def clear_buffer(assistant_id: Optional[str] = None):
+    """
+    Clear the audio buffer.
+    
+    Args:
+        assistant_id: Specific assistant to clear, or None to clear all
+    """
     buffer = get_audio_buffer()
-    await buffer.clear()
-    return {"success": True, "message": "Buffer cleared"}
+    await buffer.clear(assistant_id)
+    if assistant_id:
+        return {"success": True, "message": f"Buffer cleared for assistant {assistant_id}"}
+    return {"success": True, "message": "All buffers cleared"}
 
 
 @app.websocket("/ws/audio")
