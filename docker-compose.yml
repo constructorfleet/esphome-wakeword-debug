@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # Mosquitto MQTT Broker
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    container_name: wakeword-mqtt
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+    networks:
+      - wakeword-network
+
+  # Audio Ingest Service
+  ingest-service:
+    build:
+      context: ./ingest_service
+      dockerfile: Dockerfile
+    container_name: wakeword-ingest
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - SAMPLE_RATE=16000
+      - SAMPLE_WIDTH=2
+      - CHANNELS=1
+      - BUFFER_DURATION_SECONDS=60.0
+      - PRE_WAKE_DURATION_SECONDS=2.0
+      - POST_WAKE_DURATION_SECONDS=3.0
+      - OUTPUT_DIR=/app/audio_clips
+      - MQTT_BROKER=mqtt
+      - MQTT_PORT=1883
+      - MQTT_TOPIC_PREFIX=wakeword/debug
+      - MQTT_CLIENT_ID=wakeword-ingest-service
+      - HASS_DISCOVERY_PREFIX=homeassistant
+    volumes:
+      - ./audio_clips:/app/audio_clips
+    depends_on:
+      - mqtt
+    restart: unless-stopped
+    networks:
+      - wakeword-network
+
+  # Home Assistant (Optional - for testing MQTT integration)
+  homeassistant:
+    image: homeassistant/home-assistant:latest
+    container_name: wakeword-homeassistant
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=UTC
+    volumes:
+      - ./homeassistant/config:/config
+    depends_on:
+      - mqtt
+    restart: unless-stopped
+    networks:
+      - wakeword-network
+    privileged: true
+
+networks:
+  wakeword-network:
+    driver: bridge
+
+volumes:
+  audio_clips:
