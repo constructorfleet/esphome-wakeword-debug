@@ -142,33 +142,72 @@ class AudioBuffer:
 class MultiAssistantAudioBuffer:
     """
     Manages multiple AudioBuffer instances, one per assistant ID.
+    Each assistant can have its own audio configuration.
     """
     
     def __init__(
         self,
-        sample_rate: int = settings.SAMPLE_RATE,
-        sample_width: int = settings.SAMPLE_WIDTH,
-        channels: int = settings.CHANNELS,
+        default_sample_rate: int = settings.SAMPLE_RATE,
+        default_sample_width: int = settings.SAMPLE_WIDTH,
+        default_channels: int = settings.CHANNELS,
         buffer_duration: float = settings.BUFFER_DURATION_SECONDS
     ):
-        self.sample_rate = sample_rate
-        self.sample_width = sample_width
-        self.channels = channels
+        self.default_sample_rate = default_sample_rate
+        self.default_sample_width = default_sample_width
+        self.default_channels = default_channels
         self.buffer_duration = buffer_duration
         
         # Dictionary to hold buffers per assistant ID
         self.buffers: Dict[str, AudioBuffer] = {}
+        # Dictionary to hold per-assistant audio configuration
+        self.assistant_configs: Dict[str, dict] = {}
         self.lock = asyncio.Lock()
         
         logger.info(
-            f"MultiAssistantAudioBuffer initialized: {sample_rate}Hz, "
-            f"{sample_width * 8}-bit, {channels} channel(s), "
+            f"MultiAssistantAudioBuffer initialized with defaults: {default_sample_rate}Hz, "
+            f"{default_sample_width * 8}-bit, {default_channels} channel(s), "
             f"{buffer_duration}s capacity per assistant"
         )
+    
+    async def set_audio_config(self, assistant_id: str, sample_rate: int, bits_per_sample: int, channels: int) -> None:
+        """
+        Set audio configuration for a specific assistant.
+        If a buffer already exists, it will be recreated with the new configuration.
+        
+        Args:
+            assistant_id: Unique identifier for the assistant
+            sample_rate: Sample rate in Hz
+            bits_per_sample: Bits per sample (e.g., 16, 32)
+            channels: Number of audio channels
+        """
+        async with self.lock:
+            sample_width = bits_per_sample // 8  # Convert bits to bytes
+            
+            config = {
+                "sample_rate": sample_rate,
+                "sample_width": sample_width,
+                "channels": channels
+            }
+            
+            self.assistant_configs[assistant_id] = config
+            
+            # Recreate buffer with new configuration
+            logger.info(
+                f"Setting audio config for assistant {assistant_id}: "
+                f"{sample_rate}Hz, {bits_per_sample}-bit, {channels} channel(s)"
+            )
+            
+            self.buffers[assistant_id] = AudioBuffer(
+                sample_rate=sample_rate,
+                sample_width=sample_width,
+                channels=channels,
+                buffer_duration=self.buffer_duration
+            )
     
     async def get_buffer(self, assistant_id: str) -> AudioBuffer:
         """
         Get or create a buffer for a specific assistant ID.
+        Uses assistant-specific config if available, otherwise uses defaults.
         
         Args:
             assistant_id: Unique identifier for the assistant
@@ -178,11 +217,21 @@ class MultiAssistantAudioBuffer:
         """
         async with self.lock:
             if assistant_id not in self.buffers:
-                logger.info(f"Creating new buffer for assistant: {assistant_id}")
+                # Use assistant-specific config if available, otherwise use defaults
+                config = self.assistant_configs.get(assistant_id, {})
+                sample_rate = config.get("sample_rate", self.default_sample_rate)
+                sample_width = config.get("sample_width", self.default_sample_width)
+                channels = config.get("channels", self.default_channels)
+                
+                logger.info(
+                    f"Creating new buffer for assistant {assistant_id}: "
+                    f"{sample_rate}Hz, {sample_width * 8}-bit, {channels} channel(s)"
+                )
+                
                 self.buffers[assistant_id] = AudioBuffer(
-                    sample_rate=self.sample_rate,
-                    sample_width=self.sample_width,
-                    channels=self.channels,
+                    sample_rate=sample_rate,
+                    sample_width=sample_width,
+                    channels=channels,
                     buffer_duration=self.buffer_duration
                 )
             return self.buffers[assistant_id]

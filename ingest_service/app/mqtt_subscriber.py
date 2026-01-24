@@ -30,6 +30,8 @@ class MQTTSubscriber:
         # Support wildcard topics for multiple assistants
         self.audio_topic = audio_topic if audio_topic.endswith('/+') else f"{audio_topic}/+"
         self.meta_topic = meta_topic if meta_topic.endswith('/+') else f"{meta_topic}/+"
+        # Audio info topic for per-assistant audio configuration
+        self.audio_info_topic = f"{meta_topic.rstrip('/+')}/+/audio_info"
         # Store base topics for pattern matching
         self.audio_topic_base = audio_topic.rstrip('/+')
         self.meta_topic_base = meta_topic.rstrip('/+')
@@ -40,10 +42,12 @@ class MQTTSubscriber:
         # Callbacks for handling messages
         self.audio_callback: Optional[Callable[[str, bytes], None]] = None
         self.wake_callback: Optional[Callable[[str, dict], None]] = None
+        self.audio_info_callback: Optional[Callable[[str, dict], None]] = None
         
         logger.info(
             f"MQTTSubscriber initialized: broker={broker}:{port}, "
-            f"audio_topic={self.audio_topic}, meta_topic={self.meta_topic}"
+            f"audio_topic={self.audio_topic}, meta_topic={self.meta_topic}, "
+            f"audio_info_topic={self.audio_info_topic}"
         )
     
     def set_audio_callback(self, callback: Callable[[str, bytes], None]) -> None:
@@ -53,6 +57,10 @@ class MQTTSubscriber:
     def set_wake_callback(self, callback: Callable[[str, dict], None]) -> None:
         """Set callback for handling wake word events with assistant ID."""
         self.wake_callback = callback
+    
+    def set_audio_info_callback(self, callback: Callable[[str, dict], None]) -> None:
+        """Set callback for handling audio info configuration with assistant ID."""
+        self.audio_info_callback = callback
     
     def connect(self) -> bool:
         """
@@ -105,7 +113,11 @@ class MQTTSubscriber:
             # Subscribe to topics
             client.subscribe(self.audio_topic, qos=0)
             client.subscribe(self.meta_topic, qos=1)
-            logger.info(f"Subscribed to {self.audio_topic} and {self.meta_topic}")
+            client.subscribe(self.audio_info_topic, qos=1)
+            logger.info(
+                f"Subscribed to {self.audio_topic}, {self.meta_topic}, "
+                f"and {self.audio_info_topic}"
+            )
         else:
             logger.error(f"Failed to connect to MQTT broker: {rc}")
     
@@ -131,14 +143,37 @@ class MQTTSubscriber:
         # Remove base topic prefix and extract the ID
         if topic.startswith(base_topic + '/'):
             assistant_id = topic[len(base_topic) + 1:]
+            # For audio_info topic, extract ID from pattern: base/ID/audio_info
+            if assistant_id.endswith('/audio_info'):
+                assistant_id = assistant_id[:-len('/audio_info')]
             return assistant_id if assistant_id else None
         return None
     
     def _on_message(self, client, userdata, msg):
         """Callback for when a message is received."""
         try:
+            # Check if this is an audio_info topic
+            if msg.topic.endswith('/audio_info'):
+                # Extract assistant ID from topic
+                assistant_id = self._extract_assistant_id(msg.topic, self.meta_topic_base)
+                if not assistant_id:
+                    logger.warning(f"Could not extract assistant ID from audio_info topic: {msg.topic}")
+                    return
+                
+                # Handle audio info configuration
+                if self.audio_info_callback:
+                    try:
+                        # Parse JSON audio info
+                        audio_info = json.loads(msg.payload)
+                        logger.info(f"Received audio info for assistant {assistant_id}: {audio_info}")
+                        self.audio_info_callback(assistant_id, audio_info)
+                    except Exception as e:
+                        logger.error(f"Error parsing audio info for assistant {assistant_id}: {e}")
+                else:
+                    logger.warning("Received audio info but no callback set")
+            
             # Check if this is an audio topic
-            if msg.topic.startswith(self.audio_topic_base):
+            elif msg.topic.startswith(self.audio_topic_base):
                 # Extract assistant ID from topic
                 assistant_id = self._extract_assistant_id(msg.topic, self.audio_topic_base)
                 if not assistant_id:
@@ -156,7 +191,7 @@ class MQTTSubscriber:
                 else:
                     logger.warning("Received audio data but no callback set")
             
-            # Check if this is a meta topic
+            # Check if this is a meta topic (but not audio_info)
             elif msg.topic.startswith(self.meta_topic_base):
                 # Extract assistant ID from topic
                 assistant_id = self._extract_assistant_id(msg.topic, self.meta_topic_base)

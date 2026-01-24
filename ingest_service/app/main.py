@@ -80,6 +80,38 @@ async def handle_audio_data(assistant_id: str, audio_data: bytes) -> None:
     logger.debug(f"Received {len(audio_data)} bytes of audio data for assistant {assistant_id}")
 
 
+async def handle_audio_info(assistant_id: str, audio_info: dict) -> None:
+    """Handle audio info configuration from MQTT."""
+    logger.info(f"Configuring audio for assistant {assistant_id}: {audio_info}")
+    
+    try:
+        buffer = get_audio_buffer()
+        
+        # Extract audio parameters
+        sample_rate = audio_info.get("sample_rate")
+        bits_per_sample = audio_info.get("bits_per_sample")
+        channels = audio_info.get("channels")
+        
+        # Validate required fields
+        if not all([sample_rate, bits_per_sample, channels]):
+            logger.error(
+                f"Invalid audio info for assistant {assistant_id}: "
+                f"missing required fields (sample_rate, bits_per_sample, channels)"
+            )
+            return
+        
+        # Set audio configuration for this assistant
+        await buffer.set_audio_config(assistant_id, sample_rate, bits_per_sample, channels)
+        
+        logger.info(
+            f"Audio configuration set for assistant {assistant_id}: "
+            f"{sample_rate}Hz, {bits_per_sample}-bit, {channels} channel(s)"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error processing audio info for assistant {assistant_id}: {e}")
+
+
 async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
     """Handle wake word event from MQTT."""
     logger.info(f"Wake word detected for assistant {assistant_id}: {metadata}")
@@ -133,6 +165,7 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
         logger.error(f"Error processing wake event from MQTT for assistant {assistant_id}: {e}")
 
 
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
@@ -167,12 +200,18 @@ async def startup_event():
         if main_event_loop and not main_event_loop.is_closed():
             asyncio.run_coroutine_threadsafe(handle_audio_data(assistant_id, data), main_event_loop)
     
+    def audio_info_callback(assistant_id: str, audio_info: dict):
+        """Thread-safe wrapper for async audio info handler."""
+        if main_event_loop and not main_event_loop.is_closed():
+            asyncio.run_coroutine_threadsafe(handle_audio_info(assistant_id, audio_info), main_event_loop)
+    
     def wake_callback(assistant_id: str, metadata: dict):
         """Thread-safe wrapper for async wake handler."""
         if main_event_loop and not main_event_loop.is_closed():
             asyncio.run_coroutine_threadsafe(handle_wake_event(assistant_id, metadata), main_event_loop)
     
     subscriber.set_audio_callback(audio_callback)
+    subscriber.set_audio_info_callback(audio_info_callback)
     subscriber.set_wake_callback(wake_callback)
     
     if subscriber.connect():
