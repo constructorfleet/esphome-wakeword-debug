@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections import deque
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import numpy as np
 
 from .config import settings
@@ -251,6 +251,6 @@ class MultiAssistantAudioBuffer:
             return 0.0
         return sum(buffer.get_duration() for buffer in self.buffers.values()) / len(self.buffers)
     
-    def get_assistant_ids(self) -> list[str]:
+    def get_assistant_ids(self) -> List[str]:
         """Get list of all assistant IDs with active buffers."""
         return list(self.buffers.keys())
