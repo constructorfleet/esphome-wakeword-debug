@@ -39,7 +39,7 @@ services:
       - MQTT_TOPIC_PREFIX=wakeword/debug
       - MQTT_CLIENT_ID=wakeword-ingest-service
       - MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm
-      - MQTT_META_TOPIC=satellite1/audio_debug/meta
+      - MQTT_EVENT_TOPIC=satellite1/audio_debug/meta
       - HASS_DISCOVERY_PREFIX=homeassistant
     volumes:
       - ./audio_clips:/app/audio_clips

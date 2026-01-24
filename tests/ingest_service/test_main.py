@@ -148,7 +148,7 @@ class TestMainAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert "Buffer cleared" in data["message"]
+        assert "cleared" in data["message"].lower()
         mock_buffer_instance.clear.assert_called_once()
     
     @patch('ingest_service.app.main.get_wav_writer')
@@ -239,14 +239,14 @@ class TestMainAPI:
             asyncio.set_event_loop(loop)
             
             # Simulate the callback wrapper that would be created in startup_event
-            def audio_callback(data: bytes):
+            def audio_callback(assistant_id: str, data: bytes):
                 """Thread-safe wrapper for async audio handler."""
                 # This should not raise "no running event loop" when called from another thread
-                asyncio.run_coroutine_threadsafe(handle_audio_data(data), loop)
+                asyncio.run_coroutine_threadsafe(handle_audio_data(assistant_id, data), loop)
             
-            def wake_callback(metadata: dict):
+            def wake_callback(assistant_id: str, metadata: dict):
                 """Thread-safe wrapper for async wake handler."""
-                asyncio.run_coroutine_threadsafe(handle_wake_event(metadata), loop)
+                asyncio.run_coroutine_threadsafe(handle_wake_event(assistant_id, metadata), loop)
             
             # Test calling from a different thread (simulating MQTT thread)
             test_data = b'\x00\x01\x02\x03'
@@ -257,8 +257,8 @@ class TestMainAPI:
                 nonlocal callback_exception
                 try:
                     # This should work without "no running event loop" error
-                    audio_callback(test_data)
-                    wake_callback({"event": "test"})
+                    audio_callback("test_assistant", test_data)
+                    wake_callback("test_assistant", {"event": "test"})
                 except Exception as e:
                     callback_exception = e
             

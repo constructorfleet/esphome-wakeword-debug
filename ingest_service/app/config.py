@@ -28,8 +28,9 @@ class Settings:
     MQTT_PASSWORD: Optional[str] = os.getenv("MQTT_PASSWORD")
     MQTT_TOPIC_PREFIX: str = os.getenv("MQTT_TOPIC_PREFIX", "wakeword/debug")
     MQTT_CLIENT_ID: str = os.getenv("MQTT_CLIENT_ID", "wakeword-ingest-service")
-    MQTT_AUDIO_TOPIC: str = os.getenv("MQTT_AUDIO_TOPIC", "satellite1/audio_debug/pcm")
-    MQTT_META_TOPIC: str = os.getenv("MQTT_META_TOPIC", "satellite1/audio_debug/meta")
+    MQTT_AUDIO_TOPIC: str = os.getenv("MQTT_AUDIO_TOPIC", "assist/debug/+/pcm")
+    MQTT_EVENT_TOPIC: str = os.getenv("MQTT_EVENT_TOPIC", "assist/debug/+/events")
+    MQTT_AUDIO_INFO_TOPIC: str = os.getenv("MQTT_AUDIO_INFO_TOPIC", "assist/debug/+/audio_info")
     
     # Home Assistant Discovery
     HASS_DISCOVERY_PREFIX: str = os.getenv("HASS_DISCOVERY_PREFIX", "homeassistant")

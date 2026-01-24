@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import re
 from typing import Optional, Callable
 import paho.mqtt.client as mqtt
 
@@ -20,35 +21,44 @@ class MQTTSubscriber:
         password: Optional[str] = settings.MQTT_PASSWORD,
         client_id: str = f"{settings.MQTT_CLIENT_ID}-subscriber",
         audio_topic: str = settings.MQTT_AUDIO_TOPIC,
-        meta_topic: str = settings.MQTT_META_TOPIC
+        event_topic: str = settings.MQTT_EVENT_TOPIC,
+        audio_info_topic: str = settings.MQTT_AUDIO_INFO_TOPIC,
     ):
         self.broker = broker
         self.port = port
         self.username = username
         self.password = password
         self.client_id = client_id
-        self.audio_topic = audio_topic
-        self.meta_topic = meta_topic
+        # Support wildcard topics for multiple assistants
+        self.audio_topic = audio_topic if '/+' in audio_topic else f"{audio_topic}/+"
+        self.audio_info_topic = audio_info_topic if '/+' in audio_info_topic else f"{audio_info_topic}/+"
+        self.event_topic = event_topic if '/+' in event_topic else f"{event_topic}/+"
         
         self.client: Optional[mqtt.Client] = None
         self.connected = False
         
         # Callbacks for handling messages
-        self.audio_callback: Optional[Callable[[bytes], None]] = None
-        self.wake_callback: Optional[Callable[[dict], None]] = None
+        self.audio_callback: Optional[Callable[[str, bytes], None]] = None
+        self.wake_callback: Optional[Callable[[str, dict], None]] = None
+        self.audio_info_callback: Optional[Callable[[str, dict], None]] = None
         
         logger.info(
             f"MQTTSubscriber initialized: broker={broker}:{port}, "
-            f"audio_topic={audio_topic}, meta_topic={meta_topic}"
+            f"audio_topic={self.audio_topic}, event_topic={self.event_topic}, "
+            f"audio_info_topic={self.audio_info_topic}"
         )
     
-    def set_audio_callback(self, callback: Callable[[bytes], None]) -> None:
-        """Set callback for handling audio data."""
+    def set_audio_callback(self, callback: Callable[[str, bytes], None]) -> None:
+        """Set callback for handling audio data with assistant ID."""
         self.audio_callback = callback
     
-    def set_wake_callback(self, callback: Callable[[dict], None]) -> None:
-        """Set callback for handling wake word events."""
+    def set_wake_callback(self, callback: Callable[[str, dict], None]) -> None:
+        """Set callback for handling wake word events with assistant ID."""
         self.wake_callback = callback
+    
+    def set_audio_info_callback(self, callback: Callable[[str, dict], None]) -> None:
+        """Set callback for handling audio info configuration with assistant ID."""
+        self.audio_info_callback = callback
     
     def connect(self) -> bool:
         """
@@ -100,8 +110,12 @@ class MQTTSubscriber:
             
             # Subscribe to topics
             client.subscribe(self.audio_topic, qos=0)
-            client.subscribe(self.meta_topic, qos=1)
-            logger.info(f"Subscribed to {self.audio_topic} and {self.meta_topic}")
+            client.subscribe(self.event_topic, qos=1)
+            client.subscribe(self.audio_info_topic, qos=1)
+            logger.info(
+                f"Subscribed to {self.audio_topic}, {self.event_topic}, "
+                f"and {self.audio_info_topic}"
+            )
         else:
             logger.error(f"Failed to connect to MQTT broker: {rc}")
     
@@ -112,31 +126,92 @@ class MQTTSubscriber:
             logger.warning(f"Unexpected MQTT disconnect: {rc}")
         else:
             logger.info("MQTT Subscriber disconnected from broker")
+
+    def _match_topic(self, topic: str, base_topic: str) -> Optional[re.Match]:
+        """
+        Perform regular expression match against a topic.
+        Args:
+            topic: Full MQTT topic (e.g., "assist/debug/assistant1/pcm")
+            base_topic: Base topic pattern with wildcard (e.g., "assist/debug/+/pcm")
+        
+        Returns:
+            re.Match or None if not found
+        """
+        # Escape special regex characters except +
+        pattern_str = re.escape(base_topic).replace(r'\+', '([^/]+)')
+        pattern = re.compile(f"^{pattern_str}$")
+        match = pattern.match(topic)
+        return match
+    
+    def _extract_assistant_id(self, topic: str, base_topic: str) -> Optional[str]:
+        """
+        Extract assistant ID from topic path using wildcard pattern matching.
+        
+        Args:
+            topic: Full MQTT topic (e.g., "assist/debug/assistant1/pcm")
+            base_topic: Base topic pattern with wildcard (e.g., "assist/debug/+/pcm")
+        
+        Returns:
+            Assistant ID or None if not found
+        """
+        match = self._match_topic(topic, base_topic)
+        if not match:
+            return None
+        assistant_id = match.group(1)
+        return assistant_id if assistant_id else None
     
     def _on_message(self, client, userdata, msg):
         """Callback for when a message is received."""
         try:
-            if msg.topic == self.audio_topic:
+            # Check if this is an audio_info topic
+            if assistant_id := self._extract_assistant_id(msg.topic, self.audio_info_topic):
+                if not assistant_id:
+                    logger.warning(f"Could not extract assistant ID from audio_info topic: {msg.topic}")
+                    return
+                
+                # Handle audio info configuration
+                if self.audio_info_callback:
+                    try:
+                        # Parse JSON audio info
+                        audio_info = json.loads(msg.payload)
+                        logger.info(f"Received audio info for assistant {assistant_id}: {audio_info}")
+                        self.audio_info_callback(assistant_id, audio_info)
+                    except Exception as e:
+                        logger.error(f"Error parsing audio info for assistant {assistant_id}: {e}")
+                else:
+                    logger.warning("Received audio info but no callback set")
+            
+            # Check if this is an audio topic
+            elif assistant_id := self._extract_assistant_id(msg.topic, self.audio_topic):
+                if not assistant_id:
+                    logger.warning(f"Could not extract assistant ID from topic: {msg.topic}")
+                    return
+                
                 # Handle audio data (base64 encoded)
                 if self.audio_callback:
                     try:
                         # Decode base64 audio data
                         audio_data = base64.b64decode(msg.payload)
-                        self.audio_callback(audio_data)
+                        self.audio_callback(assistant_id, audio_data)
                     except Exception as e:
-                        logger.error(f"Error decoding audio data: {e}")
+                        logger.error(f"Error decoding audio data for assistant {assistant_id}: {e}")
                 else:
                     logger.warning("Received audio data but no callback set")
             
-            elif msg.topic == self.meta_topic:
+            # Check if this is a meta topic (but not audio_info)
+            elif assistant_id := self._extract_assistant_id(msg.topic, self.event_topic):
+                if not assistant_id:
+                    logger.warning(f"Could not extract assistant ID from topic: {msg.topic}")
+                    return
+                
                 # Handle wake word metadata
                 if self.wake_callback:
                     try:
                         # Parse JSON metadata
                         metadata = json.loads(msg.payload)
-                        self.wake_callback(metadata)
+                        self.wake_callback(assistant_id, metadata)
                     except Exception as e:
-                        logger.error(f"Error parsing wake metadata: {e}")
+                        logger.error(f"Error parsing wake metadata for assistant {assistant_id}: {e}")
                 else:
                     logger.warning("Received wake metadata but no callback set")
         

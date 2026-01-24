@@ -39,9 +39,12 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 - Micro wake word detection with configurable models
 - Conditional audio debug streaming via switch
 - Wake word event metadata publishing
+- **Multi-assistant support**: Publish to topics with assistant ID in the middle (e.g., `assist/debug/assistant1/pcm` matches pattern `assist/debug/+/pcm`)
 
 ### Ingest Service
 - MQTT subscriber for base64-encoded audio chunks from ESPHome
+- **Multi-assistant audio buffering**: Separate audio buffers for each assistant ID
+- **Per-assistant audio configuration**: Dynamic audio parameters via MQTT retained messages
 - Real-time audio buffering (configurable duration)
 - Automatic wake event clip extraction on wake word detection
 - Wake event clip extraction (pre/post event audio)
@@ -112,6 +115,29 @@ microphone:
     channel: left
     sample_rate: 48000       # Must match SAMPLE_RATE in .env
     bits_per_sample: 32bit   # Must match SAMPLE_WIDTH (4 bytes = 32 bits)
+    on_data:
+      then:
+        - if:
+            condition:
+              - switch.is_on: enable_audio_debug
+            then:
+              - mqtt.publish:
+                  topic: assist/audio_debug/${name}/pcm
+                  payload: !lambda |-
+                    return esphome::base64_encode(x);
+
+on_boot:
+  - then:
+      mqtt.publish: 
+        topic: assist/debug/${name}/audio_info
+        retain: true
+        payload: !lambda |-
+          auto stream_info = id(sat1_mics).get_audio_stream_info();
+          auto channels = std::to_string(stream_info.get_channels());
+          auto sample_rate = std::to_string(stream_info.get_sample_rate());
+          auto bits_per_sample = std::to_string(stream_info.get_bits_per_sample());
+
+          return "{\"event\":\"wake\",\"rate\":" + sample_rate + ",\"bits\":" + bits_per_sample + ",\"channels\":" + channels + "}";
 
 # Configure wake word models (update URLs to your model files)
 micro_wake_word:
@@ -122,6 +148,20 @@ micro_wake_word:
       id: hey_eddie
     - model: https://your-server.com/path/to/hey_eddie/hey_eddie.v3.0.json
       id: hey_eddie_v3_0
+  on_wake_word_detected:
+    - if:
+        condition:
+          - switch.is_on: enable_audio_debug
+        then:
+          - mqtt.publish:
+              topic: assist/debug/${name}/events
+              payload: !lambda |-
+                auto stream_info = id(sat1_mics).get_audio_stream_info();
+                auto channels = std::to_string(stream_info.get_channels());
+                auto sample_rate = std::to_string(stream_info.get_sample_rate());
+                auto bits_per_sample = std::to_string(stream_info.get_bits_per_sample());
+
+                return "{\"event\":\"wake\",\"rate\":" + sample_rate + ",\"bits\":" + bits_per_sample + ",\"channels\":" + channels + "}";
 
 # Debug audio switch (enables audio streaming to MQTT)
 switch:
@@ -144,14 +184,20 @@ esphome run example-config.yaml
 Use the REST API to capture audio clips:
 
 ```bash
-# Trigger a wake event (captures 2s pre + 3s post)
+# Trigger a wake event (captures 2s pre + 3s post) for default assistant
 curl -X POST http://localhost:8000/wake_event
+
+# Trigger for specific assistant
+curl -X POST "http://localhost:8000/wake_event?assistant_id=assistant1"
 
 # Custom duration
 curl -X POST "http://localhost:8000/wake_event?pre_duration=3.0&post_duration=5.0"
 
 # Check service health
 curl http://localhost:8000/health
+
+# View active assistants
+curl http://localhost:8000/
 ```
 
 Audio clips are saved to `./audio_clips/` directory.
@@ -177,13 +223,17 @@ POST_WAKE_DURATION_SECONDS=3.0    # Audio after wake event
 MQTT_BROKER=mqtt           # MQTT broker hostname
 MQTT_PORT=1883            # MQTT broker port
 MQTT_TOPIC_PREFIX=wakeword/debug
-MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm   # Topic for base64 audio data from ESPHome
-MQTT_META_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events from ESPHome
+MQTT_AUDIO_TOPIC=assist/debug/+/pcm   # Pattern for audio data with wildcard
+MQTT_EVENT_TOPIC=assist/debug/+/events  # Pattern for wake word events with wildcard
+MQTT_AUDIO_INFO_TOPIC=assist/debug/+/audio_info  # Pattern for audio configuration with wildcard
 ```
 
-**Important:** The MQTT topics (`MQTT_AUDIO_TOPIC` and `MQTT_META_TOPIC`) in the `.env` file must match the topics configured in your `example-config.yaml`:
-- Audio data is published to `satellite1/audio_debug/pcm` in the microphone's `on_data` action
-- Wake word metadata is published to `satellite1/audio_debug/meta` in the `on_wake_word_detected` action
+**Important:** The MQTT topics use wildcard patterns with `+` to match any assistant ID:
+- **Topic patterns** in `.env`: `assist/debug/+/pcm`, `assist/debug/+/events`, `assist/debug/+/audio_info`
+- **Service subscribes to**: These exact wildcard patterns
+- **Device publishes to**: `assist/debug/assistant1/pcm`, `assist/debug/assistant1/events`, `assist/debug/assistant1/audio_info`
+
+Each assistant ID gets its own separate audio buffer, so multiple assistants can be running simultaneously without audio mixing.
 
 ### I2S Microphone Wiring
 
@@ -201,19 +251,62 @@ Example wiring for INMP441 (as shown in example-config.yaml):
 
 ## API Endpoints
 
-**Note:** The ingest service currently supports WebSocket audio streaming. With the new MQTT-based approach, the service can be extended to subscribe to MQTT topics for audio data instead of/in addition to WebSocket connections.
+**Note:** The ingest service supports both WebSocket audio streaming (legacy) and MQTT-based streaming with multi-assistant support.
 
 ### WebSocket (Legacy)
-- `ws://host:8000/ws/audio` - Audio streaming endpoint
+- `ws://host:8000/ws/audio` - Audio streaming endpoint (single stream, no assistant separation)
 
 ### REST API
-- `GET /` - Service information
-- `GET /health` - Health check
+- `GET /` - Service information (includes list of active assistants)
+- `GET /health` - Health check (includes active assistant count)
 - `POST /wake_event` - Trigger wake event and save clip
-  - Query params: `pre_duration`, `post_duration`
+  - Query params: `assistant_id` (default: "default"), `pre_duration`, `post_duration`
 - `POST /clear_buffer` - Clear audio buffer
+  - Query params: `assistant_id` (optional - clears specific assistant or all if omitted)
 - `POST /cleanup` - Cleanup old WAV files
   - Query params: `max_age_days`
+
+### Multi-Assistant Support
+
+The service automatically manages separate audio buffers for each assistant ID. When devices publish to topics like:
+- `assist/debug/assistant1/pcm`
+- `assist/debug/assistant1/events`
+- `assist/debug/assistant1/audio_info` (retained)
+
+The service will:
+1. Extract the assistant ID (`assistant1`) from the topic using the wildcard pattern
+2. Create and maintain a separate audio buffer for that assistant
+3. Route wake events to the correct assistant's buffer
+4. Include the assistant ID in saved clip metadata
+
+#### Per-Assistant Audio Configuration
+
+Each assistant can publish a retained message to `assist/debug/{assistant_id}/audio_info` containing its audio configuration:
+
+```json
+{
+  "sample_rate": 48000,
+  "bits_per_sample": 32,
+  "channels": 1
+}
+```
+
+This allows the service to:
+- Configure buffers with the correct audio parameters for each assistant
+- Support different audio formats simultaneously (e.g., one assistant at 16kHz/16-bit, another at 48kHz/32-bit)
+- Automatically create properly configured buffers when audio data arrives
+- Fall back to global defaults if no configuration is provided
+
+**Example ESPHome configuration:**
+```yaml
+on_boot:
+  - priority: -100
+    then:
+      - mqtt.publish:
+          topic: assist/debug/assistant1/audio_info
+          payload: '{"sample_rate":48000,"bits_per_sample":32,"channels":1}'
+          retain: true
+```
 
 ## Home Assistant Integration
 
@@ -291,7 +384,7 @@ esphome-wakeword-debug/
 - Check I2S pin configuration in example-config.yaml
 - Ensure the "Satellite1 Debug Audio" switch is turned on in Home Assistant
 - View ESPHome logs: `esphome logs example-config.yaml`
-- Monitor MQTT topics: `mosquitto_sub -h localhost -t "satellite1/audio_debug/#" -v`
+- Monitor MQTT topics: `mosquitto_sub -h localhost -t "assist/debug/#" -v`
 
 ### Wake Word Not Detecting
 - Verify wake word model URLs are accessible
@@ -302,7 +395,7 @@ esphome-wakeword-debug/
 ### MQTT Not Working
 - Check MQTT broker is running: `docker-compose logs mqtt`
 - Verify MQTT broker address in example-config.yaml
-- Test MQTT connection: `mosquitto_sub -h localhost -t "satellite1/audio_debug/#" -v`
+- Test MQTT connection: `mosquitto_sub -h localhost -t "assist/debug/#" -v`
 - Verify MQTT credentials if authentication is enabled
 
 ## License
