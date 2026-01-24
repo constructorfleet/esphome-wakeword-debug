@@ -245,18 +245,27 @@ esphome-wakeword-debug/
 
 ### ESP32 Not Connecting
 - Verify WiFi credentials
-- Check WebSocket URL (use IP address, not hostname)
+- Check MQTT broker connectivity (use IP address if hostname doesn't resolve)
 - Check firewall rules on server
 
 ### No Audio Data
-- Verify I2S wiring
-- Check I2S pin configuration
+- Verify I2S wiring (see wiring table above)
+- Check I2S pin configuration in example-config.yaml
+- Ensure the "Satellite1 Debug Audio" switch is turned on in Home Assistant
 - View ESPHome logs: `esphome logs example-config.yaml`
+- Monitor MQTT topics: `mosquitto_sub -h localhost -t "satellite1/audio_debug/#" -v`
+
+### Wake Word Not Detecting
+- Verify wake word model URLs are accessible
+- Check micro_wake_word configuration
+- View ESPHome logs for wake word detection events
+- Ensure the "Satellite1 Debug Audio" switch is enabled
 
 ### MQTT Not Working
 - Check MQTT broker is running: `docker-compose logs mqtt`
-- Verify MQTT_BROKER environment variable
-- Test with MQTT client: `mosquitto_sub -h localhost -t "wakeword/debug/#" -v`
+- Verify MQTT broker address in example-config.yaml
+- Test MQTT connection: `mosquitto_sub -h localhost -t "satellite1/audio_debug/#" -v`
+- Verify MQTT credentials if authentication is enabled
 
 ## License
 
