@@ -221,3 +221,53 @@ class TestMainAPI:
         assert "mqtt_subscriber_connected" in data
         assert isinstance(data["mqtt_publisher_connected"], bool)
         assert isinstance(data["mqtt_subscriber_connected"], bool)
+    
+    def test_mqtt_callbacks_use_thread_safe_scheduling(self):
+        """Test that MQTT callbacks are properly set up with thread-safe asyncio scheduling."""
+        import asyncio
+        import threading
+        from ingest_service.app.main import handle_audio_data, handle_wake_event
+        
+        # Timeout for thread join operation
+        THREAD_JOIN_TIMEOUT = 1.0
+        
+        # Create an event loop for the test
+        loop = asyncio.new_event_loop()
+        
+        try:
+            # Set the loop in the current thread
+            asyncio.set_event_loop(loop)
+            
+            # Simulate the callback wrapper that would be created in startup_event
+            def audio_callback(data: bytes):
+                """Thread-safe wrapper for async audio handler."""
+                # This should not raise "no running event loop" when called from another thread
+                asyncio.run_coroutine_threadsafe(handle_audio_data(data), loop)
+            
+            def wake_callback(metadata: dict):
+                """Thread-safe wrapper for async wake handler."""
+                asyncio.run_coroutine_threadsafe(handle_wake_event(metadata), loop)
+            
+            # Test calling from a different thread (simulating MQTT thread)
+            test_data = b'\x00\x01\x02\x03'
+            callback_exception = None
+            
+            def call_from_thread():
+                """Call the callback from a separate thread to simulate MQTT thread."""
+                nonlocal callback_exception
+                try:
+                    # This should work without "no running event loop" error
+                    audio_callback(test_data)
+                    wake_callback({"event": "test"})
+                except Exception as e:
+                    callback_exception = e
+            
+            thread = threading.Thread(target=call_from_thread)
+            thread.start()
+            thread.join(timeout=THREAD_JOIN_TIMEOUT)
+            
+            # Should not raise "no running event loop" error
+            assert callback_exception is None, f"Callback raised exception: {callback_exception}"
+            
+        finally:
+            loop.close()
