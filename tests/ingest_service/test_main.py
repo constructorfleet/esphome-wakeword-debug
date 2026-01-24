@@ -228,6 +228,9 @@ class TestMainAPI:
         import threading
         from ingest_service.app.main import handle_audio_data, handle_wake_event
         
+        # Timeout for thread join operation
+        THREAD_JOIN_TIMEOUT = 1.0
+        
         # Create an event loop for the test
         loop = asyncio.new_event_loop()
         
@@ -261,7 +264,7 @@ class TestMainAPI:
             
             thread = threading.Thread(target=call_from_thread)
             thread.start()
-            thread.join(timeout=2.0)
+            thread.join(timeout=THREAD_JOIN_TIMEOUT)
             
             # Should not raise "no running event loop" error
             assert callback_exception is None, f"Callback raised exception: {callback_exception}"

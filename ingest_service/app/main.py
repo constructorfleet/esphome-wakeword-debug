@@ -35,7 +35,9 @@ mqtt_subscriber: Optional[MQTTSubscriber] = None
 # Track active websocket connections
 active_connections: list[WebSocket] = []
 
-# Store reference to main event loop for thread-safe task scheduling
+# Store reference to main event loop for thread-safe task scheduling.
+# MQTT callbacks run in a separate thread and need to schedule coroutines
+# on the main event loop using asyncio.run_coroutine_threadsafe().
 main_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
