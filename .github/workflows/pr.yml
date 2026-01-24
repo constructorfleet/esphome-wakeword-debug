@@ -23,11 +23,7 @@ jobs:
         run: |
           pip install -r ingest_service/requirements.txt
       
-      - name: Run tests
-        run: |
-          pytest tests/ -v --cov=ingest_service --cov-report=term-missing
-      
-      - name: Run validation script
+      - name: Run validation and tests
         run: |
           chmod +x validate.sh
           ./validate.sh

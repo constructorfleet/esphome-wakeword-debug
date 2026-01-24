@@ -37,6 +37,7 @@ jobs:
             type=sha,prefix={{branch}}-
       
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: ./ingest_service
@@ -48,4 +49,4 @@ jobs:
           cache-to: type=gha,mode=max
       
       - name: Image digest
-        run: echo ${{ steps.meta.outputs.digest }}
+        run: echo ${{ steps.build.outputs.digest }}
