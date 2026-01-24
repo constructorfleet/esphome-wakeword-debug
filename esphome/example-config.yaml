@@ -71,11 +71,11 @@ micro_wake_word:
         then:
           - mqtt.publish:
               topic: satellite1/audio_debug/meta
-              payload: '{"event":"wake","rate":48000,"bits":32,"channels":2}'
+              payload: '{"event":"wake","rate":48000,"bits":32,"channels":1}'
 
 # Debug Audio Switch
 switch:
   - platform: template
     id: enable_audio_debug
     name: "Satellite1 Debug Audio"
-    optimistic: 'true'
+    optimistic: true
