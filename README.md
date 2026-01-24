@@ -115,6 +115,29 @@ microphone:
     channel: left
     sample_rate: 48000       # Must match SAMPLE_RATE in .env
     bits_per_sample: 32bit   # Must match SAMPLE_WIDTH (4 bytes = 32 bits)
+    on_data:
+      then:
+        - if:
+            condition:
+              - switch.is_on: enable_audio_debug
+            then:
+              - mqtt.publish:
+                  topic: assist/audio_debug/${name}/pcm
+                  payload: !lambda |-
+                    return esphome::base64_encode(x);
+
+on_boot:
+  - then:
+      mqtt.publish: 
+        topic: assist/debug/${name}/audio_info
+        retain: true
+        payload: !lambda |-
+          auto stream_info = id(sat1_mics).get_audio_stream_info();
+          auto channels = std::to_string(stream_info.get_channels());
+          auto sample_rate = std::to_string(stream_info.get_sample_rate());
+          auto bits_per_sample = std::to_string(stream_info.get_bits_per_sample());
+
+          return "{\"event\":\"wake\",\"rate\":" + sample_rate + ",\"bits\":" + bits_per_sample + ",\"channels\":" + channels + "}";
 
 # Configure wake word models (update URLs to your model files)
 micro_wake_word:
@@ -125,6 +148,20 @@ micro_wake_word:
       id: hey_eddie
     - model: https://your-server.com/path/to/hey_eddie/hey_eddie.v3.0.json
       id: hey_eddie_v3_0
+  on_wake_word_detected:
+    - if:
+        condition:
+          - switch.is_on: enable_audio_debug
+        then:
+          - mqtt.publish:
+              topic: assist/debug/${name}/events
+              payload: !lambda |-
+                auto stream_info = id(sat1_mics).get_audio_stream_info();
+                auto channels = std::to_string(stream_info.get_channels());
+                auto sample_rate = std::to_string(stream_info.get_sample_rate());
+                auto bits_per_sample = std::to_string(stream_info.get_bits_per_sample());
+
+                return "{\"event\":\"wake\",\"rate\":" + sample_rate + ",\"bits\":" + bits_per_sample + ",\"channels\":" + channels + "}";
 
 # Debug audio switch (enables audio streaming to MQTT)
 switch:
@@ -187,10 +224,11 @@ MQTT_BROKER=mqtt           # MQTT broker hostname
 MQTT_PORT=1883            # MQTT broker port
 MQTT_TOPIC_PREFIX=wakeword/debug
 MQTT_AUDIO_TOPIC=satellite1/audio_debug/pcm   # Topic for base64 audio data from ESPHome (wildcard + will be added)
-MQTT_META_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events from ESPHome (wildcard + will be added)
+MQTT_EVENT_TOPIC=satellite1/audio_debug/meta   # Topic for wake word events from ESPHome (wildcard + will be added)
+MQTT_AUDIO_INFO_TOPIC=satellite1/audio_debug/audio_info  # Topic for audio info from ESPHome (wildcard + will be added)
 ```
 
-**Important:** The MQTT topics (`MQTT_AUDIO_TOPIC` and `MQTT_META_TOPIC`) in the `.env` file should be the base topic paths **without** the assistant ID. The service will automatically subscribe to these topics with a wildcard (`+`) to support multiple assistants. For example:
+**Important:** The MQTT topics (`MQTT_AUDIO_TOPIC`, `MQTT_AUDIO_INFO_TOPIC` and `MQTT_EVENT_TOPIC`) in the `.env` file can the full topic or the base topic paths **without** the assistant ID. The service will automatically subscribe to these topics with a wildcard (`+`) to support multiple assistants if necessary. For example:
 - **Base topics** in `.env`: `satellite1/audio_debug/pcm` and `satellite1/audio_debug/meta`
 - **Actual subscriptions**: `satellite1/audio_debug/pcm/+` and `satellite1/audio_debug/meta/+`
 - **Device publishes to**: `satellite1/audio_debug/pcm/assistant1` and `satellite1/audio_debug/meta/assistant1`
@@ -231,9 +269,9 @@ Example wiring for INMP441 (as shown in example-config.yaml):
 ### Multi-Assistant Support
 
 The service automatically manages separate audio buffers for each assistant ID. When devices publish to topics like:
-- `satellite1/audio_debug/pcm/assistant1`
-- `satellite1/audio_debug/meta/assistant1`
-- `satellite1/audio_debug/meta/assistant1/audio_info` (retained)
+- `satellite1/audio_debug/assistant1/pcm`
+- `satellite1/audio_debug/assistant1/events`
+- `satellite1/audio_debug/assistant1/audio_info` (retained)
 
 The service will:
 1. Extract the assistant ID (`assistant1`) from the topic
@@ -243,7 +281,7 @@ The service will:
 
 #### Per-Assistant Audio Configuration
 
-Each assistant can publish a retained message to `satellite1/audio_debug/meta/{assistant_id}/audio_info` containing its audio configuration:
+Each assistant can publish a retained message to `satellite1/audio_debug/{assistant_id}/audio_info` containing its audio configuration:
 
 ```json
 {
@@ -265,7 +303,7 @@ on_boot:
   - priority: -100
     then:
       - mqtt.publish:
-          topic: satellite1/audio_debug/meta/assistant1/audio_info
+          topic: satellite1/audio_debug/assistant1/audio_info
           payload: '{"sample_rate":48000,"bits_per_sample":32,"channels":1}'
           retain: true
 ```

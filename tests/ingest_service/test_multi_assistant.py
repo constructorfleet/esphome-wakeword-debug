@@ -190,21 +190,21 @@ class TestMQTTSubscriberMultiAssistant:
         """Test that subscriber adds wildcard to topics."""
         subscriber = MQTTSubscriber(
             audio_topic="satellite1/audio_debug/pcm",
-            meta_topic="satellite1/audio_debug/meta"
+            event_topic="satellite1/audio_debug/meta"
         )
         
         assert subscriber.audio_topic == "satellite1/audio_debug/pcm/+"
-        assert subscriber.meta_topic == "satellite1/audio_debug/meta/+"
+        assert subscriber.event_topic == "satellite1/audio_debug/meta/+"
     
     def test_init_preserves_existing_wildcard(self):
         """Test that subscriber preserves existing wildcard."""
         subscriber = MQTTSubscriber(
             audio_topic="satellite1/audio_debug/pcm/+",
-            meta_topic="satellite1/audio_debug/meta/+"
+            event_topic="satellite1/audio_debug/meta/+"
         )
         
         assert subscriber.audio_topic == "satellite1/audio_debug/pcm/+"
-        assert subscriber.meta_topic == "satellite1/audio_debug/meta/+"
+        assert subscriber.event_topic == "satellite1/audio_debug/meta/+"
     
     def test_extract_assistant_id_from_audio_topic(self):
         """Test extracting assistant ID from audio topic."""
@@ -219,10 +219,10 @@ class TestMQTTSubscriberMultiAssistant:
         
         assert assistant_id == "assistant1"
     
-    def test_extract_assistant_id_from_meta_topic(self):
+    def test_extract_assistant_id_from_event_topic(self):
         """Test extracting assistant ID from meta topic."""
         subscriber = MQTTSubscriber(
-            meta_topic="satellite1/audio_debug/meta"
+            event_topic="satellite1/audio_debug/meta"
         )
         
         assistant_id = subscriber._extract_assistant_id(
@@ -261,7 +261,7 @@ class TestMQTTSubscriberMultiAssistant:
     def test_extract_assistant_id_from_audio_info_topic(self):
         """Test extracting assistant ID from audio_info topic."""
         subscriber = MQTTSubscriber(
-            meta_topic="satellite1/audio_debug/meta"
+            event_topic="satellite1/audio_debug/meta"
         )
         
         assistant_id = subscriber._extract_assistant_id(
@@ -274,7 +274,7 @@ class TestMQTTSubscriberMultiAssistant:
     def test_audio_info_topic_initialization(self):
         """Test that audio_info topic is properly initialized."""
         subscriber = MQTTSubscriber(
-            meta_topic="satellite1/audio_debug/meta"
+            event_topic="satellite1/audio_debug/meta"
         )
         
         assert subscriber.audio_info_topic == "satellite1/audio_debug/meta/+/audio_info"

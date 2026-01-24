@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import re
 from typing import Optional, Callable
 import paho.mqtt.client as mqtt
 
@@ -20,7 +21,8 @@ class MQTTSubscriber:
         password: Optional[str] = settings.MQTT_PASSWORD,
         client_id: str = f"{settings.MQTT_CLIENT_ID}-subscriber",
         audio_topic: str = settings.MQTT_AUDIO_TOPIC,
-        meta_topic: str = settings.MQTT_META_TOPIC
+        event_topic: str = settings.MQTT_EVENT_TOPIC,
+        audio_info_topic: str = settings.MQTT_AUDIO_INFO_TOPIC,
     ):
         self.broker = broker
         self.port = port
@@ -28,13 +30,9 @@ class MQTTSubscriber:
         self.password = password
         self.client_id = client_id
         # Support wildcard topics for multiple assistants
-        self.audio_topic = audio_topic if audio_topic.endswith('/+') else f"{audio_topic}/+"
-        self.meta_topic = meta_topic if meta_topic.endswith('/+') else f"{meta_topic}/+"
-        # Audio info topic for per-assistant audio configuration
-        self.audio_info_topic = f"{meta_topic.rstrip('/+')}/+/audio_info"
-        # Store base topics for pattern matching
-        self.audio_topic_base = audio_topic.rstrip('/+')
-        self.meta_topic_base = meta_topic.rstrip('/+')
+        self.audio_topic = audio_topic if '/+' in audio_topic else f"{audio_topic}/+"
+        self.audio_info_topic = audio_info_topic if '/+' in audio_info_topic else f"{audio_info_topic}/+"
+        self.event_topic = event_topic if '/+' in event_topic else f"{event_topic}/+"
         
         self.client: Optional[mqtt.Client] = None
         self.connected = False
@@ -46,7 +44,7 @@ class MQTTSubscriber:
         
         logger.info(
             f"MQTTSubscriber initialized: broker={broker}:{port}, "
-            f"audio_topic={self.audio_topic}, meta_topic={self.meta_topic}, "
+            f"audio_topic={self.audio_topic}, event_topic={self.event_topic}, "
             f"audio_info_topic={self.audio_info_topic}"
         )
     
@@ -112,10 +110,10 @@ class MQTTSubscriber:
             
             # Subscribe to topics
             client.subscribe(self.audio_topic, qos=0)
-            client.subscribe(self.meta_topic, qos=1)
+            client.subscribe(self.event_topic, qos=1)
             client.subscribe(self.audio_info_topic, qos=1)
             logger.info(
-                f"Subscribed to {self.audio_topic}, {self.meta_topic}, "
+                f"Subscribed to {self.audio_topic}, {self.event_topic}, "
                 f"and {self.audio_info_topic}"
             )
         else:
@@ -128,6 +126,22 @@ class MQTTSubscriber:
             logger.warning(f"Unexpected MQTT disconnect: {rc}")
         else:
             logger.info("MQTT Subscriber disconnected from broker")
+
+    def _match_topic(self, topic: str, base_topic: str) -> Optional[re.Match]:
+        """
+        Perform regular expression match against a topic.
+        Args:
+            topic: Full MQTT topic (e.g., "satellite1/audio_debug/pcm/assistant1")
+            base_topic: Base topic path (e.g., "satellite1/audio_debug/pcm")
+        
+        Returns:
+            re.Match or None if not found
+        """
+        pattern = re.compile(base_topic.replace('+', '(.+?)'))
+        match = pattern.match(topic)
+        if not match:
+            return None
+        return match
     
     def _extract_assistant_id(self, topic: str, base_topic: str) -> Optional[str]:
         """
@@ -141,21 +155,17 @@ class MQTTSubscriber:
             Assistant ID or None if not found
         """
         # Remove base topic prefix and extract the ID
-        if topic.startswith(base_topic + '/'):
-            assistant_id = topic[len(base_topic) + 1:]
-            # For audio_info topic, extract ID from pattern: base/ID/audio_info
-            if assistant_id.endswith('/audio_info'):
-                assistant_id = assistant_id[:-len('/audio_info')]
-            return assistant_id if assistant_id else None
-        return None
+        match = self._match_topic(topic, base_topic)
+        if not match:
+            return None
+        assistant_id = match.group(1):
+        return assistant_id if assistant_id or None
     
     def _on_message(self, client, userdata, msg):
         """Callback for when a message is received."""
         try:
             # Check if this is an audio_info topic
-            if msg.topic.endswith('/audio_info'):
-                # Extract assistant ID from topic
-                assistant_id = self._extract_assistant_id(msg.topic, self.meta_topic_base)
+            if assistant_id := self._extract_assistant_id(msg.topic, self.audio_info_topic):
                 if not assistant_id:
                     logger.warning(f"Could not extract assistant ID from audio_info topic: {msg.topic}")
                     return
@@ -173,9 +183,7 @@ class MQTTSubscriber:
                     logger.warning("Received audio info but no callback set")
             
             # Check if this is an audio topic
-            elif msg.topic.startswith(self.audio_topic_base):
-                # Extract assistant ID from topic
-                assistant_id = self._extract_assistant_id(msg.topic, self.audio_topic_base)
+            elif assistant_id := self._extract_assistant_id(msg.topic, self.audio_topic):
                 if not assistant_id:
                     logger.warning(f"Could not extract assistant ID from topic: {msg.topic}")
                     return
@@ -192,9 +200,7 @@ class MQTTSubscriber:
                     logger.warning("Received audio data but no callback set")
             
             # Check if this is a meta topic (but not audio_info)
-            elif msg.topic.startswith(self.meta_topic_base):
-                # Extract assistant ID from topic
-                assistant_id = self._extract_assistant_id(msg.topic, self.meta_topic_base)
+            elif assistant_id := self._extract_assistant_id(msg.topic, self.event_topic):
                 if not assistant_id:
                     logger.warning(f"Could not extract assistant ID from topic: {msg.topic}")
                     return

@@ -2,6 +2,15 @@ esphome:
   name: audio-stream-device
   platform: ESP32
   board: esp32dev
+  # Publish audio configuration (retained message for multi-assistant support)
+  # This allows the ingest service to configure buffers with correct audio parameters
+  on_boot:
+    - priority: -100
+      then:
+        - mqtt.publish:
+            topic: satellite1/audio_debug/assistant1/audio_info
+            payload: '{"sample_rate":48000,"bits_per_sample":32,"channels":1}'
+            retain: true
 
 # Enable logging
 logger:
@@ -54,7 +63,7 @@ microphone:
               - mqtt.publish:
                   # For multi-assistant support, append assistant ID to topic
                   # Example: satellite1/audio_debug/pcm/assistant1
-                  topic: satellite1/audio_debug/pcm/assistant1
+                  topic: satellite1/audio_debug/assistant1/pcm
                   payload: !lambda |-
                     return esphome::base64_encode(x);
 
@@ -75,18 +84,8 @@ micro_wake_word:
           - mqtt.publish:
               # For multi-assistant support, append same assistant ID to topic
               # Must match the ID used in audio_debug/pcm topic above
-              topic: satellite1/audio_debug/meta/assistant1
+              topic: satellite1/audio_debug/assistant1/events
               payload: '{"event":"wake","rate":48000,"bits":32,"channels":1}'
-
-# Publish audio configuration (retained message for multi-assistant support)
-# This allows the ingest service to configure buffers with correct audio parameters
-on_boot:
-  - priority: -100
-    then:
-      - mqtt.publish:
-          topic: satellite1/audio_debug/meta/assistant1/audio_info
-          payload: '{"sample_rate":48000,"bits_per_sample":32,"channels":1}'
-          retain: true
 
 # Debug Audio Switch
 switch:
