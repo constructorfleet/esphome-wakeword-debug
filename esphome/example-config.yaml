@@ -26,40 +26,56 @@ wifi:
 
 captive_portal:
 
-# Audio Stream WebSocket Component
-audio_stream_ws:
-  id: audio_stream
-  url: "ws://192.168.1.100:8000/ws/audio"
-  i2s_din_pin: 26
-  i2s_ws_pin: 25
-  i2s_clk_pin: 33
-  sample_rate: 16000
-  bits_per_sample: 16
+# MQTT Configuration
+mqtt:
+  broker: "YOUR_MQTT_BROKER"
+  port: 1883
+  username: "YOUR_MQTT_USERNAME"
+  password: "YOUR_MQTT_PASSWORD"
 
-# Button to start streaming
-button:
-  - platform: template
-    name: "Start Audio Streaming"
-    on_press:
-      - audio_stream_ws.start:
-          id: audio_stream
-          
-  - platform: template
-    name: "Stop Audio Streaming"
-    on_press:
-      - audio_stream_ws.stop:
-          id: audio_stream
+# Microphone Configuration
+microphone:
+  - platform: i2s_audio
+    id: sat1_mics
+    i2s_din_pin: GPIO26
+    i2s_bclk_pin: GPIO33  # Bit clock (SCK)
+    i2s_lrclk_pin: GPIO25  # Left/Right clock (WS)
+    adc_type: external
+    pdm: false
+    channel: left
+    sample_rate: 48000
+    bits_per_sample: 32bit
+    on_data:
+      then:
+        - if:
+            condition:
+              - switch.is_on: enable_audio_debug
+            then:
+              - mqtt.publish:
+                  topic: satellite1/audio_debug/pcm
+                  payload: !lambda |-
+                    return esphome::base64_encode(x);
 
-# Auto-start streaming on boot
+# Micro Wake Word Configuration
+micro_wake_word:
+  id: mww
+  models:
+    - model: https://automation.home.prettybaked.com/local/hey_eddie/hey_eddie.json
+      id: hey_eddie
+    - model: https://automation.home.prettybaked.com/local/hey_eddie/hey_eddie.v3.0.json
+      id: hey_eddie_v3_0
+  on_wake_word_detected:
+    - if:
+        condition:
+          - switch.is_on: enable_audio_debug
+        then:
+          - mqtt.publish:
+              topic: satellite1/audio_debug/meta
+              payload: '{"event":"wake","rate":48000,"bits":32,"channels":2}'
+
+# Debug Audio Switch
 switch:
   - platform: template
-    name: "Auto-stream on boot"
-    id: auto_stream
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    on_turn_on:
-      - audio_stream_ws.start:
-          id: audio_stream
-    on_turn_off:
-      - audio_stream_ws.stop:
-          id: audio_stream
+    id: enable_audio_debug
+    name: "Satellite1 Debug Audio"
+    optimistic: 'true'

@@ -1,28 +1,30 @@
 # ESPHome Wake Word Debug Pipeline
 
 A comprehensive audio capture and processing pipeline for wake word debugging, consisting of:
-- **ESPHome Component**: Captures I2S microphone audio and streams raw PCM over WebSocket
+- **ESPHome Configuration**: Captures I2S microphone audio and streams base64-encoded PCM chunks over MQTT
 - **Python FastAPI Ingest Service**: Buffers audio, extracts clips around wake events, writes WAV files, and publishes MQTT events
 - **Home Assistant Integration**: React to wake word events via MQTT
 
 ## Architecture
 
 ```
-┌─────────────────┐         WebSocket          ┌──────────────────┐
-│  ESP32 Device   │ ─────────(PCM Audio)─────> │ Ingest Service   │
-│  + I2S Mic      │                             │  (FastAPI)       │
+┌─────────────────┐           MQTT             ┌──────────────────┐
+│  ESP32 Device   │ ───────(Base64 PCM)──────> │  MQTT Broker     │
+│  + I2S Mic      │                             │  (Mosquitto)     │
 │  + ESPHome      │                             │                  │
-└─────────────────┘                             │ • Audio Buffer   │
-                                                │ • WAV Writer     │
-                                                │ • MQTT Publisher │
-                                                └────────┬─────────┘
-                                                         │ MQTT
+│  + Micro Wake   │                             └────────┬─────────┘
+│    Word         │                                      │
+└─────────────────┘                                      │ MQTT
                                                          ▼
                                                 ┌──────────────────┐
-                                                │  MQTT Broker     │
-                                                │  (Mosquitto)     │
+                                                │ Ingest Service   │
+                                                │  (FastAPI)       │
+                                                │                  │
+                                                │ • Audio Buffer   │
+                                                │ • WAV Writer     │
+                                                │ • MQTT Subscriber│
                                                 └────────┬─────────┘
-                                                         │
+                                                         │ MQTT
                                                          ▼
                                                 ┌──────────────────┐
                                                 │ Home Assistant   │
@@ -31,12 +33,12 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 
 ## Features
 
-### ESPHome Component
-- I2S microphone capture (16kHz, 16-bit PCM)
-- WebSocket streaming of raw audio data
-- Configurable sample rate and bit depth
-- Auto-reconnect on connection loss
-- Start/stop actions via Home Assistant
+### ESPHome Configuration
+- I2S microphone capture (48kHz, 32-bit PCM)
+- MQTT streaming of base64-encoded audio chunks
+- Micro wake word detection with configurable models
+- Conditional audio debug streaming via switch
+- Wake word event metadata publishing
 
 ### Ingest Service
 - Real-time audio buffering (configurable duration)
@@ -80,12 +82,24 @@ wifi:
   ssid: "YOUR_WIFI_SSID"
   password: "YOUR_WIFI_PASSWORD"
 
-# Update with your ingest service IP
-audio_stream_ws:
-  url: "ws://YOUR_SERVER_IP:8000/ws/audio"
-  i2s_din_pin: 26  # Adjust for your wiring
-  i2s_ws_pin: 25
-  i2s_clk_pin: 33
+# Update with your MQTT broker details
+mqtt:
+  broker: "YOUR_MQTT_BROKER"
+  port: 1883
+  username: "YOUR_MQTT_USERNAME"
+  password: "YOUR_MQTT_PASSWORD"
+
+# Update microphone I2S pins for your wiring
+microphone:
+  - platform: i2s_audio
+    i2s_din_pin: 26  # Adjust for your wiring
+    # Additional configuration in the example file
+
+# Configure wake word models
+micro_wake_word:
+  models:
+    - model: https://your-server.com/path/to/model.json
+      id: your_model
 ```
 
 ### 3. Flash ESP32 Device
@@ -139,17 +153,19 @@ MQTT_TOPIC_PREFIX=wakeword/debug
 
 Example wiring for INMP441:
 
-| INMP441 Pin | ESP32 Pin  | Description      |
-|-------------|------------|------------------|
-| VDD         | 3.3V       | Power            |
-| GND         | GND        | Ground           |
-| SD          | GPIO 26    | Data In (DIN)    |
-| WS          | GPIO 25    | Word Select      |
-| SCK         | GPIO 33    | Clock            |
+| INMP441 Pin | ESP32 Pin  | Config Parameter | Description      |
+|-------------|------------|------------------|------------------|
+| VDD         | 3.3V       | -                | Power            |
+| GND         | GND        | -                | Ground           |
+| SD          | GPIO 26    | i2s_din_pin      | Data In          |
+| WS          | GPIO 25    | i2s_lrclk_pin    | Word Select/LR   |
+| SCK         | GPIO 33    | i2s_bclk_pin     | Bit Clock        |
 
 ## API Endpoints
 
-### WebSocket
+**Note:** The ingest service currently supports WebSocket audio streaming. With the new MQTT-based approach, the service can be extended to subscribe to MQTT topics for audio data instead of/in addition to WebSocket connections.
+
+### WebSocket (Legacy)
 - `ws://host:8000/ws/audio` - Audio streaming endpoint
 
 ### REST API
@@ -206,11 +222,6 @@ pytest tests/ --cov=ingest_service --cov-report=html
 ```
 esphome-wakeword-debug/
 ├── esphome/
-│   ├── components/
-│   │   └── audio_stream_ws/      # ESPHome component
-│   │       ├── __init__.py
-│   │       ├── audio_stream_ws.h
-│   │       └── audio_stream_ws.cpp
 │   └── example-config.yaml        # Example ESPHome config
 ├── ingest_service/
 │   ├── app/
