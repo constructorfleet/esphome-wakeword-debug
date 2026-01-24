@@ -1,0 +1,53 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r ingest_service/requirements.txt
+      
+      - name: Run tests
+        run: |
+          pytest tests/ -v --cov=ingest_service --cov-report=term-missing
+      
+      - name: Run validation script
+        run: |
+          chmod +x validate.sh
+          ./validate.sh
+
+  docker-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker image (validation only)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ingest_service
+          file: ./ingest_service/Dockerfile
+          push: false
+          tags: wakeword-ingest:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
