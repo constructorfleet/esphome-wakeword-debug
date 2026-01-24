@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -149,8 +150,6 @@ async def startup_event():
     subscriber = get_mqtt_subscriber()
     
     # Set up callbacks with asyncio-compatible wrappers
-    import asyncio
-    
     def audio_callback(data: bytes):
         """Sync wrapper for async audio handler."""
         asyncio.create_task(handle_audio_data(data))
