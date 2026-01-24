@@ -22,7 +22,7 @@ docker compose config > /dev/null 2>&1 && echo "✓ Docker Compose config valid"
 
 echo
 echo "4. Checking project structure..."
-for dir in esphome/components/audio_stream_ws ingest_service/app tests/ingest_service; do
+for dir in esphome ingest_service/app tests/ingest_service; do
     if [ -d "$dir" ]; then
         echo "✓ $dir exists"
     else
@@ -34,9 +34,7 @@ done
 echo
 echo "5. Verifying key files..."
 for file in \
-    esphome/components/audio_stream_ws/__init__.py \
-    esphome/components/audio_stream_ws/audio_stream_ws.h \
-    esphome/components/audio_stream_ws/audio_stream_ws.cpp \
+    esphome/example-config.yaml \
     ingest_service/app/main.py \
     ingest_service/app/audio_buffer.py \
     ingest_service/app/wav_writer.py \

@@ -43,7 +43,10 @@ class MQTTPublisher:
             True if connection successful, False otherwise
         """
         try:
-            self.client = mqtt.Client(client_id=self.client_id)
+            self.client = mqtt.Client(
+                client_id=self.client_id,
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION1
+            )
             
             # Set callbacks
             self.client.on_connect = self._on_connect

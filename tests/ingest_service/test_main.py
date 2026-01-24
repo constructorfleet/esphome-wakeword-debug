@@ -12,7 +12,7 @@ with patch.dict(os.environ, {
     "OUTPUT_DIR": tempfile.mkdtemp(),
     "MQTT_BROKER": "test-broker"
 }):
-    from ingest_service.app.main import app, get_audio_buffer, get_wav_writer, get_mqtt_publisher
+    from ingest_service.app.main import app, get_audio_buffer, get_wav_writer, get_mqtt_publisher, get_mqtt_subscriber
 
 
 @pytest.fixture
@@ -28,6 +28,7 @@ def reset_globals():
     main_module.audio_buffer = None
     main_module.wav_writer = None
     main_module.mqtt_publisher = None
+    main_module.mqtt_subscriber = None
     yield
 
 
@@ -216,5 +217,7 @@ class TestMainAPI:
         
         assert response.status_code == 200
         data = response.json()
-        assert "mqtt_connected" in data
-        assert isinstance(data["mqtt_connected"], bool)
+        assert "mqtt_publisher_connected" in data
+        assert "mqtt_subscriber_connected" in data
+        assert isinstance(data["mqtt_publisher_connected"], bool)
+        assert isinstance(data["mqtt_subscriber_connected"], bool)
