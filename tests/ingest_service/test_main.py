@@ -66,6 +66,11 @@ class TestMainAPI:
         mock_clip = np.array([i for i in range(1000)], dtype=np.int16)
         mock_buffer_instance = Mock()
         mock_buffer_instance.get_clip = AsyncMock(return_value=mock_clip)
+        mock_buffer_instance.get_audio_config = Mock(return_value={
+            "sample_rate": 48000,
+            "sample_width": 4,
+            "channels": 1
+        })
         mock_get_buffer.return_value = mock_buffer_instance
         
         # Mock WAV writer
@@ -114,6 +119,11 @@ class TestMainAPI:
         mock_clip = np.array([i for i in range(1000)], dtype=np.int16)
         mock_buffer_instance = Mock()
         mock_buffer_instance.get_clip = AsyncMock(return_value=mock_clip)
+        mock_buffer_instance.get_audio_config = Mock(return_value={
+            "sample_rate": 48000,
+            "sample_width": 4,
+            "channels": 1
+        })
         mock_get_buffer.return_value = mock_buffer_instance
         
         mock_wav_instance = Mock()
