@@ -104,7 +104,7 @@ def _parse_datetime(value: str) -> datetime:
 def _clip_metadata(wav_path: Path) -> dict:
     # Ensure wav_path is within CLIP_BASE_DIR before deriving metadata path
     try:
-        wav_path.relative_to(CLIP_BASE_DIR)
+        wav_path.resolve().relative_to(CLIP_BASE_DIR)
     except ValueError:
         return {}
     
@@ -608,8 +608,7 @@ async def label_clip(clip_name: str, payload: ClipLabelRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid path") from exc
     
-    shutil.move(str(source_path), str(target_path))
-
+    # Read metadata before moving the file
     metadata = _clip_metadata(source_path)
     metadata["label"] = label
     metadata["reviewed_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -624,9 +623,14 @@ async def label_clip(clip_name: str, payload: ClipLabelRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid metadata path") from exc
     
+    # Move the WAV file
+    shutil.move(str(source_path), str(target_path))
+    
+    # Move the metadata file if it exists
     if metadata_path.exists():
         shutil.move(str(metadata_path), str(target_metadata_path))
 
+    # Write updated metadata to the new location
     try:
         with open(target_metadata_path, "w") as metadata_file:
             json.dump(metadata, metadata_file, indent=2)
