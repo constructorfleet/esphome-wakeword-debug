@@ -1,9 +1,14 @@
-import logging
 import asyncio
-from datetime import datetime
+import json
+import logging
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Path as FastAPIPath
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import uvicorn
 
 from .config import settings
@@ -11,6 +16,7 @@ from .audio_buffer import AudioBuffer, MultiAssistantAudioBuffer
 from .wav_writer import WAVWriter
 from .mqtt_publisher import MQTTPublisher
 from .mqtt_subscriber import MQTTSubscriber
+from . import clip_db
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +32,22 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# UI and clip storage paths
+CLIP_BASE_DIR = Path(os.getenv("OUTPUT_DIR", settings.OUTPUT_DIR)).resolve()
+CLIP_DB_PATH = Path(
+    os.getenv("CLIP_DB_PATH", str(CLIP_BASE_DIR / "clips.db"))
+).resolve()
+STATIC_DIR = Path(__file__).parent / "static"
+CLIP_LABELS = {
+    clip_db.LABEL_POSITIVE,
+    clip_db.LABEL_FALSE_POSITIVE,
+    clip_db.LABEL_UNKNOWN,
+}
+
+# Serve the review UI
+if STATIC_DIR.exists():
+    app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+
 # Initialize components (lazy initialization)
 audio_buffer: Optional[MultiAssistantAudioBuffer] = None
 wav_writer: Optional[WAVWriter] = None
@@ -39,6 +61,10 @@ active_connections: list[WebSocket] = []
 # MQTT callbacks run in a separate thread and need to schedule coroutines
 # on the main event loop using asyncio.run_coroutine_threadsafe().
 main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+class ClipLabelRequest(BaseModel):
+    label: str
 
 
 def get_audio_buffer() -> MultiAssistantAudioBuffer:
@@ -71,6 +97,67 @@ def get_mqtt_subscriber() -> MQTTSubscriber:
     if mqtt_subscriber is None:
         mqtt_subscriber = MQTTSubscriber()
     return mqtt_subscriber
+
+
+def _parse_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime: {value}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _clip_metadata(wav_path: Path) -> dict:
+    metadata_path = wav_path.with_suffix(".json")
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as metadata_file:
+                return json.load(metadata_file)
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Failed to read metadata for %s", wav_path.name)
+    return {}
+
+
+def _clip_timestamp(metadata: dict, wav_path: Path) -> datetime:
+    timestamp = metadata.get("timestamp")
+    if isinstance(timestamp, str):
+        try:
+            return _parse_datetime(timestamp)
+        except HTTPException:
+            pass
+    return datetime.fromtimestamp(wav_path.stat().st_mtime, tz=timezone.utc)
+
+
+def _clip_path_from_filename(filename: str) -> Path:
+    candidate = (CLIP_BASE_DIR / filename).resolve()
+    try:
+        candidate.relative_to(CLIP_BASE_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid clip path") from exc
+    if candidate.suffix.lower() != ".wav":
+        raise HTTPException(status_code=400, detail="Invalid clip path")
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="Clip not found")
+    return candidate
+
+
+def _sync_clips_from_disk() -> None:
+    if not CLIP_BASE_DIR.exists():
+        return
+    for wav_path in CLIP_BASE_DIR.glob("*.wav"):
+        metadata = _clip_metadata(wav_path)
+        timestamp = _clip_timestamp(metadata, wav_path)
+        clip_db.insert_clip(
+            CLIP_DB_PATH,
+            filename=wav_path.name,
+            timestamp=timestamp.isoformat().replace("+00:00", "Z"),
+            assistant_id=metadata.get("assistant_id"),
+            duration=metadata.get("duration"),
+            sample_rate=metadata.get("sample_rate"),
+            label=clip_db.LABEL_UNKNOWN,
+        )
 
 
 async def handle_audio_data(assistant_id: str, audio_data: bytes) -> None:
@@ -173,6 +260,16 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
             sample_width=sample_width,
             channels=channels
         )
+
+        clip_db.insert_clip(
+            CLIP_DB_PATH,
+            filename=Path(wav_path).name,
+            timestamp=timestamp.replace("+00:00", "Z"),
+            assistant_id=assistant_id,
+            duration=clip_metadata.get("duration"),
+            sample_rate=sample_rate,
+            label=clip_db.LABEL_UNKNOWN,
+        )
         
         # Publish MQTT event
         mqtt.publish_wake_event(wav_path, clip_metadata)
@@ -197,10 +294,13 @@ async def startup_event():
     logger.info(f"Sample Rate: {settings.SAMPLE_RATE} Hz")
     logger.info(f"Buffer Duration: {settings.BUFFER_DURATION_SECONDS}s")
     logger.info(f"Output Directory: {settings.OUTPUT_DIR}")
+    logger.info(f"Clip DB Path: {CLIP_DB_PATH}")
     
     # Initialize components
     get_audio_buffer()
     get_wav_writer()
+    clip_db.init_db(CLIP_DB_PATH)
+    _sync_clips_from_disk()
     
     # Connect to MQTT broker (publisher)
     mqtt = get_mqtt_publisher()
@@ -347,6 +447,16 @@ async def trigger_wake_event(
             sample_width=sample_width,
             channels=channels
         )
+
+        clip_db.insert_clip(
+            CLIP_DB_PATH,
+            filename=Path(wav_path).name,
+            timestamp=timestamp.replace("+00:00", "Z"),
+            assistant_id=assistant_id,
+            duration=metadata.get("duration"),
+            sample_rate=sample_rate,
+            label=clip_db.LABEL_UNKNOWN,
+        )
         
         # Publish MQTT event
         mqtt_published = mqtt.publish_wake_event(wav_path, metadata)
@@ -433,6 +543,82 @@ async def cleanup_old_files(max_age_days: int = 7):
         "success": True,
         "deleted_count": deleted_count,
         "max_age_days": max_age_days
+    }
+
+
+@app.get("/api/clips")
+async def list_clips(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    label: Optional[str] = clip_db.LABEL_UNKNOWN,
+):
+    """List audio clips with optional datetime filtering."""
+    start_dt = _parse_datetime(start) if start else None
+    end_dt = _parse_datetime(end) if end else None
+
+    start_iso = start_dt.isoformat().replace("+00:00", "Z") if start_dt else None
+    end_iso = end_dt.isoformat().replace("+00:00", "Z") if end_dt else None
+
+    rows = clip_db.list_clips(CLIP_DB_PATH, start=start_iso, end=end_iso, label=label)
+    clips = []
+    for row in rows:
+        clips.append(
+            {
+                "id": row["id"],
+                "filename": row["filename"],
+                "timestamp": row["timestamp"],
+                "duration_seconds": row["duration"],
+                "assistant_id": row["assistant_id"],
+                "sample_rate": row["sample_rate"],
+                "label": row["label"],
+                "audio_url": f"/api/clips/{row['id']}/audio",
+            }
+        )
+
+    return {"clips": clips}
+
+
+@app.get("/api/clips/{clip_id}/audio")
+async def get_clip_audio(clip_id: int = FastAPIPath(..., ge=1)):
+    """Stream a WAV clip."""
+    row = clip_db.get_clip(CLIP_DB_PATH, clip_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    wav_path = _clip_path_from_filename(row["filename"])
+    return FileResponse(wav_path)
+
+
+@app.post("/api/clips/{clip_id}/label")
+async def label_clip(
+    payload: ClipLabelRequest,
+    clip_id: int = FastAPIPath(..., ge=1),
+):
+    """Label a clip in the database."""
+    label = payload.label
+    if label not in CLIP_LABELS:
+        raise HTTPException(status_code=400, detail="Invalid label")
+
+    updated = clip_db.update_label(CLIP_DB_PATH, clip_id, label)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    row = clip_db.get_clip(CLIP_DB_PATH, clip_id)
+    if row:
+        wav_path = _clip_path_from_filename(row["filename"])
+        metadata = _clip_metadata(wav_path)
+        metadata["label"] = label
+        metadata["reviewed_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        metadata_path = wav_path.with_suffix(".json")
+        try:
+            with open(metadata_path, "w") as metadata_file:
+                json.dump(metadata, metadata_file, indent=2)
+        except OSError:
+            logger.warning("Failed to write metadata for %s", wav_path.name)
+
+    return {
+        "success": True,
+        "clip_id": clip_id,
+        "label": label,
     }
 
 

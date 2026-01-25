@@ -32,6 +32,36 @@ jobs:
           chmod +x validate.sh
           ./validate.sh
 
+  web-ui-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ingest_service/web_ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ingest_service/web_ui
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: ingest_service/web_ui
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: ingest_service/web_ui
+        run: npm run lint
+
+      - name: Format check
+        working-directory: ingest_service/web_ui
+        run: npm run format:check
+
   docker-build:
     runs-on: ubuntu-latest
     

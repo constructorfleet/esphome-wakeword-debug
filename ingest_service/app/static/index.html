@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wakeword Clip Review</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Wakeword Review</p>
+          <h1>Audio Clip Triage Console</h1>
+          <p class="subtitle">Listen, label, and move on. Clips disappear once reviewed.</p>
+        </div>
+        <div class="stats">
+          <div class="stat">
+            <span class="stat-label">Loaded</span>
+            <span class="stat-value" id="clip-count">0</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Range</span>
+            <span class="stat-value" id="range-label">All time</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="filters">
+        <div class="field">
+          <label for="start">Start</label>
+          <input id="start" type="datetime-local" />
+        </div>
+        <div class="field">
+          <label for="end">End</label>
+          <input id="end" type="datetime-local" />
+        </div>
+        <button id="apply" class="primary">Apply Range</button>
+        <button id="clear" class="ghost">Clear</button>
+        <div class="spacer"></div>
+        <button id="refresh" class="ghost">Refresh</button>
+      </section>
+
+      <main>
+        <div id="empty" class="empty-state hidden">
+          <div class="empty-card">
+            <h2>No clips in range</h2>
+            <p>Adjust the time range or wait for new wakeword events.</p>
+          </div>
+        </div>
+        <div id="list" class="clip-grid"></div>
+      </main>
+    </div>
+
+    <script type="module" src="/ui/app.js"></script>
+  </body>
+</html>

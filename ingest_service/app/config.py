@@ -20,6 +20,7 @@ class Settings:
     
     # Storage settings
     OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "/app/audio_clips")
+    CLIP_DB_PATH: str = os.getenv("CLIP_DB_PATH", os.path.join(OUTPUT_DIR, "clips.db"))
     
     # MQTT settings
     MQTT_BROKER: str = os.getenv("MQTT_BROKER", "localhost")
