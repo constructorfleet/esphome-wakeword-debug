@@ -134,10 +134,12 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
         await asyncio.sleep(post_duration)
         
         # Extract clip from buffer for this assistant
+        # Use trigger_offset to indicate the wake event was post_duration seconds ago
         clip = await buffer.get_clip(
             assistant_id=assistant_id,
             pre_duration=pre_duration,
-            post_duration=post_duration
+            post_duration=post_duration,
+            trigger_offset=post_duration
         )
         
         if clip is None:
@@ -305,10 +307,12 @@ async def trigger_wake_event(
         await asyncio.sleep(post_duration)
         
         # Extract clip from buffer for this assistant
+        # Use trigger_offset to indicate the wake event was post_duration seconds ago
         clip = await buffer.get_clip(
             assistant_id=assistant_id,
             pre_duration=pre_duration,
-            post_duration=post_duration
+            post_duration=post_duration,
+            trigger_offset=post_duration
         )
         
         if clip is None:

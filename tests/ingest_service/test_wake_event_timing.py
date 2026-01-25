@@ -70,8 +70,11 @@ class TestWakeEventTiming:
         sleep_duration = mock_sleep.call_args[0][0]
         assert sleep_duration == 3.0, f"Expected sleep(3.0) but got sleep({sleep_duration})"
         
-        # Verify get_clip was called AFTER sleep
+        # Verify get_clip was called AFTER sleep with trigger_offset
         mock_buffer_instance.get_clip.assert_called_once()
+        call_kwargs = mock_buffer_instance.get_clip.call_args[1]
+        assert call_kwargs.get("trigger_offset") == 3.0, \
+            f"Expected trigger_offset=3.0 but got {call_kwargs.get('trigger_offset')}"
     
     @patch('ingest_service.app.main.asyncio.sleep')
     @patch('ingest_service.app.main.get_audio_buffer')
