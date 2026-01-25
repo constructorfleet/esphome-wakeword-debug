@@ -51,11 +51,18 @@ class AudioBuffer:
         async with self.lock:
             # Convert bytes to numpy array of samples
             if self.sample_width == 2:
-                samples = np.frombuffer(audio_data, dtype=np.int16)
+                samples = np.frombuffer(audio_data, dtype='<i2')  # Little-endian 16-bit signed int
             elif self.sample_width == 4:
-                samples = np.frombuffer(audio_data, dtype=np.int32)
+                samples = np.frombuffer(audio_data, dtype='<i4')  # Little-endian 32-bit signed int
             else:
                 raise ValueError(f"Unsupported sample width: {self.sample_width}")
+            
+            # Verify sample count is divisible by number of channels
+            if len(samples) % self.channels != 0:
+                raise ValueError(
+                    f"Sample count ({len(samples)}) is not divisible by "
+                    f"number of channels ({self.channels})"
+                )
             
             # Append each sample to the buffer
             for sample in samples:
