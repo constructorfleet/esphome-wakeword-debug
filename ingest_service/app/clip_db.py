@@ -36,14 +36,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_clips_timestamp ON clips(timestamp)"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_label ON clips(label)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_deleted ON clips(deleted)")
     
     # Add deleted column to existing tables if it doesn't exist
     try:
         conn.execute("SELECT deleted FROM clips LIMIT 1")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE clips ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_deleted ON clips(deleted)")
+    
+    # Create index on deleted column (after ensuring column exists)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_deleted ON clips(deleted)")
 
 
 def init_db(db_path: Path) -> None:
