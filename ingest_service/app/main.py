@@ -102,7 +102,19 @@ def _parse_datetime(value: str) -> datetime:
 
 
 def _clip_metadata(wav_path: Path) -> dict:
+    # Ensure wav_path is within CLIP_BASE_DIR before deriving metadata path
+    try:
+        wav_path.resolve().relative_to(CLIP_BASE_DIR)
+    except ValueError:
+        return {}
+    
     metadata_path = wav_path.with_suffix(".json")
+    # Validate the derived metadata path is also within CLIP_BASE_DIR
+    try:
+        metadata_path.resolve().relative_to(CLIP_BASE_DIR)
+    except ValueError:
+        return {}
+    
     if metadata_path.exists():
         try:
             with open(metadata_path, "r") as metadata_file:
@@ -148,6 +160,12 @@ def _safe_label_dir(label: str) -> Path:
 
 
 def _unique_target_path(target_path: Path) -> Path:
+    # Validate input path is within CLIP_BASE_DIR
+    try:
+        target_path.resolve().relative_to(CLIP_BASE_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid target path") from exc
+    
     if not target_path.exists():
         return target_path
     stem = target_path.stem
@@ -155,6 +173,11 @@ def _unique_target_path(target_path: Path) -> Path:
     counter = 1
     while True:
         candidate = target_path.with_name(f"{stem}_{counter}{suffix}")
+        # Validate each derived candidate path is within CLIP_BASE_DIR
+        try:
+            candidate.resolve().relative_to(CLIP_BASE_DIR)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid target path") from exc
         if not candidate.exists():
             return candidate
         counter += 1
@@ -577,17 +600,37 @@ async def label_clip(clip_name: str, payload: ClipLabelRequest):
     target_dir.mkdir(parents=True, exist_ok=True)
 
     target_path = _unique_target_path(target_dir / source_path.name)
-    shutil.move(str(source_path), str(target_path))
-
+    
+    # Validate source and target paths are within CLIP_BASE_DIR before file operations
+    try:
+        source_path.resolve().relative_to(CLIP_BASE_DIR)
+        target_path.resolve().relative_to(CLIP_BASE_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid path") from exc
+    
+    # Read metadata before moving the file
     metadata = _clip_metadata(source_path)
     metadata["label"] = label
     metadata["reviewed_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
     metadata_path = source_path.with_suffix(".json")
     target_metadata_path = target_path.with_suffix(".json")
+    
+    # Validate metadata paths are within CLIP_BASE_DIR
+    try:
+        metadata_path.resolve().relative_to(CLIP_BASE_DIR)
+        target_metadata_path.resolve().relative_to(CLIP_BASE_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid metadata path") from exc
+    
+    # Move the WAV file
+    shutil.move(str(source_path), str(target_path))
+    
+    # Move the metadata file if it exists
     if metadata_path.exists():
         shutil.move(str(metadata_path), str(target_metadata_path))
 
+    # Write updated metadata to the new location
     try:
         with open(target_metadata_path, "w") as metadata_file:
             json.dump(metadata, metadata_file, indent=2)
