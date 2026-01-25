@@ -77,7 +77,7 @@ class WAVWriter:
                 wav_file.writeframes(audio_bytes)
             
             file_size = filepath.stat().st_size
-            duration = len(audio_data) / rate
+            duration = len(audio_data) / (rate * chans)
             
             logger.info(
                 f"Wrote WAV file: {filepath.name} "

@@ -155,7 +155,7 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
             "post_duration": post_duration,
             "sample_rate": sample_rate,
             "samples": len(clip),
-            "duration": len(clip) / sample_rate,
+            "duration": len(clip) / (sample_rate * channels),
             "wake_metadata": metadata
         }
         
@@ -324,7 +324,7 @@ async def trigger_wake_event(
             "post_duration": post_duration,
             "sample_rate": sample_rate,
             "samples": len(clip),
-            "duration": len(clip) / sample_rate
+            "duration": len(clip) / (sample_rate * channels)
         }
         
         # Write WAV file with assistant-specific audio configuration
