@@ -59,7 +59,7 @@ class TestMainAPI:
     @patch('ingest_service.app.main.get_wav_writer')
     @patch('ingest_service.app.main.get_mqtt_publisher')
     def test_trigger_wake_event_success(
-        self, mock_get_mqtt, mock_get_wav, mock_get_buffer, client
+        self, mock_get_mqtt, mock_get_wav, mock_get_buffer
     ):
         """Test triggering wake event successfully."""
         # Mock buffer returning audio clip
@@ -83,7 +83,8 @@ class TestMainAPI:
         mock_mqtt_instance.publish_wake_event.return_value = True
         mock_get_mqtt.return_value = mock_mqtt_instance
         
-        response = client.post("/wake_event")
+        with TestClient(app) as client:
+            response = client.post("/wake_event")
         
         assert response.status_code == 200
         data = response.json()
@@ -113,7 +114,7 @@ class TestMainAPI:
     @patch('ingest_service.app.main.get_wav_writer')
     @patch('ingest_service.app.main.get_mqtt_publisher')
     def test_trigger_wake_event_with_custom_durations(
-        self, mock_get_mqtt, mock_get_wav, mock_get_buffer, client
+        self, mock_get_mqtt, mock_get_wav, mock_get_buffer
     ):
         """Test wake event with custom pre/post durations."""
         mock_clip = np.array([i for i in range(1000)], dtype=np.int16)
@@ -134,9 +135,10 @@ class TestMainAPI:
         mock_mqtt_instance.publish_wake_event.return_value = True
         mock_get_mqtt.return_value = mock_mqtt_instance
         
-        response = client.post(
-            "/wake_event?pre_duration=3.0&post_duration=4.0"
-        )
+        with TestClient(app) as client:
+            response = client.post(
+                "/wake_event?pre_duration=3.0&post_duration=4.0"
+            )
         
         assert response.status_code == 200
         
