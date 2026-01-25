@@ -1,0 +1,14 @@
+{
+  "name": "wakeword-review-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/app.ts --bundle --minify --sourcemap --outfile=../app/static/app.js && cp src/index.html ../app/static/index.html && cp src/styles.css ../app/static/styles.css",
+    "dev": "esbuild src/app.ts --bundle --sourcemap --outfile=../app/static/app.js --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.2",
+    "typescript": "^5.4.5"
+  }
+}
