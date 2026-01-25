@@ -135,11 +135,16 @@ def _clip_timestamp(metadata: dict, wav_path: Path) -> datetime:
 
 
 def _safe_clip_path(filename: str) -> Path:
-    candidate = (CLIP_BASE_DIR / filename).resolve()
+    pure = Path(filename)
+    if pure.is_absolute() or len(pure.parts) != 1 or pure.name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid clip name")
+    candidate = (CLIP_BASE_DIR / pure.name).resolve()
     try:
         candidate.relative_to(CLIP_BASE_DIR)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid clip name") from exc
+    if candidate.parent != CLIP_BASE_DIR:
+        raise HTTPException(status_code=400, detail="Invalid clip name")
     if candidate.suffix.lower() != ".wav":
         raise HTTPException(status_code=400, detail="Invalid clip name")
     if not candidate.exists():
