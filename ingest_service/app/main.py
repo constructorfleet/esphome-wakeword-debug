@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -32,8 +33,10 @@ app = FastAPI(
 )
 
 # UI and clip storage paths
-CLIP_BASE_DIR = Path(settings.OUTPUT_DIR).resolve()
-CLIP_DB_PATH = Path(settings.CLIP_DB_PATH).resolve()
+CLIP_BASE_DIR = Path(os.getenv("OUTPUT_DIR", settings.OUTPUT_DIR)).resolve()
+CLIP_DB_PATH = Path(
+    os.getenv("CLIP_DB_PATH", str(CLIP_BASE_DIR / "clips.db"))
+).resolve()
 STATIC_DIR = Path(__file__).parent / "static"
 CLIP_LABELS = {
     clip_db.LABEL_POSITIVE,
