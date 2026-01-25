@@ -165,7 +165,9 @@ const render = (clips: Clip[]) => {
       deleteBtn.disabled = locked;
     };
 
-    const labelClip = async (label: "Positive" | "False Positive" | "False Negative" | "Background Noise") => {
+    const labelClip = async (
+      label: "Positive" | "False Positive" | "False Negative" | "Background Noise",
+    ) => {
       lockButtons(true);
       try {
         const response = await fetch(`/api/clips/${clip.id}/label`, {
