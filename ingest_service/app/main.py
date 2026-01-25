@@ -135,6 +135,18 @@ def _safe_clip_path(filename: str) -> Path:
     return candidate
 
 
+def _safe_label_dir(label: str) -> Path:
+    # Ensure label is a simple directory name without path separators
+    if not label or "/" in label or "\\" in label:
+        raise HTTPException(status_code=400, detail="Invalid label")
+    candidate = (CLIP_BASE_DIR / label).resolve()
+    try:
+        candidate.relative_to(CLIP_BASE_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid label") from exc
+    return candidate
+
+
 def _unique_target_path(target_path: Path) -> Path:
     if not target_path.exists():
         return target_path
@@ -561,7 +573,7 @@ async def label_clip(clip_name: str, payload: ClipLabelRequest):
         raise HTTPException(status_code=400, detail="Invalid label")
 
     source_path = _safe_clip_path(clip_name)
-    target_dir = CLIP_BASE_DIR / label
+    target_dir = _safe_label_dir(label)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     target_path = _unique_target_path(target_dir / source_path.name)
