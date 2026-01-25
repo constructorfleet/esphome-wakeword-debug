@@ -217,6 +217,8 @@ def test_list_clips_include_deleted(temp_db_path):
     # List clips including deleted
     clips = clip_db.list_clips(temp_db_path, include_deleted=True)
     assert len(clips) == 2
+    returned_ids = {clip["id"] for clip in clips}
+    assert returned_ids == {clip_id1, clip_id2}
 
 
 def test_list_clips_filter_by_label(temp_db_path):
