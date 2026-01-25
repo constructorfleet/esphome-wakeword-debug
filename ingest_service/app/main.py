@@ -715,11 +715,11 @@ async def download_clips(
         raise HTTPException(status_code=404, detail="No clips found matching the criteria")
 
     # Create a temporary zip file
-    temp_dir = tempfile.mkdtemp()
+    temp_dir = Path(tempfile.mkdtemp())
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
     label_suffix = f"_{label.replace(' ', '_')}" if label else "_all"
     zip_filename = f"clips{label_suffix}_{timestamp}.zip"
-    zip_path = Path(temp_dir) / zip_filename
+    zip_path = temp_dir / zip_filename
 
     try:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -744,18 +744,31 @@ async def download_clips(
                     arcname = f"{label_dir}/{metadata_path.name}"
                     zipf.write(metadata_path, arcname)
 
-        # Return the zip file
+        # Return the zip file with background task to cleanup temp directory
         return FileResponse(
             path=str(zip_path),
             media_type="application/zip",
             filename=zip_filename,
             headers={
                 "Content-Disposition": f"attachment; filename={zip_filename}"
-            }
+            },
+            background=lambda: _cleanup_temp_dir(temp_dir)
         )
     except Exception as e:
+        # Clean up on error
+        _cleanup_temp_dir(temp_dir)
         logger.error(f"Error creating zip file: {e}")
-        raise HTTPException(status_code=500, detail=f"Error creating zip file: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error creating zip file. Please try again.")
+
+
+def _cleanup_temp_dir(temp_dir: Path) -> None:
+    """Clean up temporary directory and its contents."""
+    try:
+        import shutil
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+    except Exception as e:
+        logger.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
 
 
 def main():
