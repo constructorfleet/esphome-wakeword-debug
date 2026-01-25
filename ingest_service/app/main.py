@@ -140,6 +140,12 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
             logger.warning(f"Insufficient audio data in buffer for assistant {assistant_id}")
             return
         
+        # Get audio configuration for this assistant (MQTT config takes precedence over ENV)
+        audio_config = buffer.get_audio_config(assistant_id)
+        sample_rate = audio_config["sample_rate"]
+        sample_width = audio_config["sample_width"]
+        channels = audio_config["channels"]
+        
         # Create metadata
         timestamp = datetime.utcnow().isoformat()
         clip_metadata = {
@@ -147,14 +153,20 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
             "assistant_id": assistant_id,
             "pre_duration": pre_duration,
             "post_duration": post_duration,
-            "sample_rate": settings.SAMPLE_RATE,
+            "sample_rate": sample_rate,
             "samples": len(clip),
-            "duration": len(clip) / settings.SAMPLE_RATE,
+            "duration": len(clip) / sample_rate,
             "wake_metadata": metadata
         }
         
-        # Write WAV file
-        wav_path = writer.write_clip(clip, metadata=clip_metadata)
+        # Write WAV file with assistant-specific audio configuration
+        wav_path = writer.write_clip(
+            clip,
+            metadata=clip_metadata,
+            sample_rate=sample_rate,
+            sample_width=sample_width,
+            channels=channels
+        )
         
         # Publish MQTT event
         mqtt.publish_wake_event(wav_path, clip_metadata)
@@ -297,6 +309,12 @@ async def trigger_wake_event(
                 detail=f"Insufficient audio data in buffer for assistant {assistant_id}"
             )
         
+        # Get audio configuration for this assistant (MQTT config takes precedence over ENV)
+        audio_config = buffer.get_audio_config(assistant_id)
+        sample_rate = audio_config["sample_rate"]
+        sample_width = audio_config["sample_width"]
+        channels = audio_config["channels"]
+        
         # Create metadata
         timestamp = datetime.utcnow().isoformat()
         metadata = {
@@ -304,13 +322,19 @@ async def trigger_wake_event(
             "assistant_id": assistant_id,
             "pre_duration": pre_duration,
             "post_duration": post_duration,
-            "sample_rate": settings.SAMPLE_RATE,
+            "sample_rate": sample_rate,
             "samples": len(clip),
-            "duration": len(clip) / settings.SAMPLE_RATE
+            "duration": len(clip) / sample_rate
         }
         
-        # Write WAV file
-        wav_path = writer.write_clip(clip, metadata=metadata)
+        # Write WAV file with assistant-specific audio configuration
+        wav_path = writer.write_clip(
+            clip,
+            metadata=metadata,
+            sample_rate=sample_rate,
+            sample_width=sample_width,
+            channels=channels
+        )
         
         # Publish MQTT event
         mqtt_published = mqtt.publish_wake_event(wav_path, metadata)
