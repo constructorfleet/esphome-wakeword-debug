@@ -88,3 +88,5 @@ audio_clips/
 # ESPHome
 .esphome/
 secrets.yaml
+
+ingest_service/web_ui/node_modules/
