@@ -6,14 +6,17 @@ import numpy as np
 import tempfile
 import os
 
+# Test constant for POST_WAKE_DURATION_SECONDS
+TEST_POST_WAKE_DURATION = 3.0
 
 # Mock settings before importing main
 with patch.dict(os.environ, {
     "OUTPUT_DIR": tempfile.mkdtemp(),
     "MQTT_BROKER": "test-broker",
-    "POST_WAKE_DURATION_SECONDS": "3.0"
+    "POST_WAKE_DURATION_SECONDS": str(TEST_POST_WAKE_DURATION)
 }):
     from ingest_service.app.main import handle_wake_event, get_audio_buffer, get_wav_writer, get_mqtt_publisher
+    from ingest_service.app.config import settings
 
 
 @pytest.fixture(autouse=True)
@@ -68,13 +71,14 @@ class TestWakeEventTiming:
         # Verify sleep was called with POST_WAKE_DURATION_SECONDS
         mock_sleep.assert_called_once()
         sleep_duration = mock_sleep.call_args[0][0]
-        assert sleep_duration == 3.0, f"Expected sleep(3.0) but got sleep({sleep_duration})"
+        assert sleep_duration == TEST_POST_WAKE_DURATION, \
+            f"Expected sleep({TEST_POST_WAKE_DURATION}) but got sleep({sleep_duration})"
         
         # Verify get_clip was called AFTER sleep with trigger_offset
         mock_buffer_instance.get_clip.assert_called_once()
         call_kwargs = mock_buffer_instance.get_clip.call_args[1]
-        assert call_kwargs.get("trigger_offset") == 3.0, \
-            f"Expected trigger_offset=3.0 but got {call_kwargs.get('trigger_offset')}"
+        assert call_kwargs.get("trigger_offset") == TEST_POST_WAKE_DURATION, \
+            f"Expected trigger_offset={TEST_POST_WAKE_DURATION} but got {call_kwargs.get('trigger_offset')}"
     
     @patch('ingest_service.app.main.asyncio.sleep')
     @patch('ingest_service.app.main.get_audio_buffer')
@@ -167,7 +171,6 @@ class TestWakeEventTiming:
         
         # The sleep duration should come from settings.POST_WAKE_DURATION_SECONDS
         sleep_duration = mock_sleep.call_args[0][0]
-        from ingest_service.app.config import settings
         assert sleep_duration == settings.POST_WAKE_DURATION_SECONDS, \
             f"Expected sleep({settings.POST_WAKE_DURATION_SECONDS}) but got sleep({sleep_duration})"
     
