@@ -310,3 +310,32 @@ class MultiAssistantAudioBuffer:
     def get_assistant_ids(self) -> List[str]:
         """Get list of all assistant IDs with active buffers."""
         return list(self.buffers.keys())
+    
+    def get_audio_config(self, assistant_id: str) -> dict:
+        """
+        Get audio configuration for a specific assistant.
+        Returns the assistant's config if it exists, otherwise returns default config.
+        
+        Args:
+            assistant_id: Unique identifier for the assistant
+        
+        Returns:
+            Dictionary with sample_rate, sample_width, and channels
+        """
+        if assistant_id in self.assistant_configs:
+            return self.assistant_configs[assistant_id].copy()
+        elif assistant_id in self.buffers:
+            # If buffer exists but no explicit config, get it from the buffer
+            buffer = self.buffers[assistant_id]
+            return {
+                "sample_rate": buffer.sample_rate,
+                "sample_width": buffer.sample_width,
+                "channels": buffer.channels
+            }
+        else:
+            # Return default configuration
+            return {
+                "sample_rate": self.default_sample_rate,
+                "sample_width": self.default_sample_width,
+                "channels": self.default_channels
+            }

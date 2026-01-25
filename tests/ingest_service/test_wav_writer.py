@@ -183,3 +183,47 @@ class TestWAVWriter:
         
         with wave.open(wav_path_32, 'rb') as f:
             assert f.getsampwidth() == 4
+    
+    def test_write_clip_with_custom_audio_params(self, tmp_path):
+        """Test writing clip with custom audio parameters that override instance defaults."""
+        # Create writer with default settings
+        writer = WAVWriter(
+            output_dir=str(tmp_path),
+            sample_rate=16000,
+            sample_width=2,
+            channels=1
+        )
+        
+        # Write clip with different parameters (simulating MQTT config)
+        test_data = np.array([i for i in range(1000)], dtype=np.int32)
+        wav_path = writer.write_clip(
+            test_data,
+            filename="custom_config.wav",
+            sample_rate=48000,
+            sample_width=4,
+            channels=2
+        )
+        
+        # Verify the WAV file uses custom parameters, not defaults
+        with wave.open(wav_path, 'rb') as wav_file:
+            assert wav_file.getframerate() == 48000  # Custom, not 16000
+            assert wav_file.getsampwidth() == 4  # Custom, not 2
+            assert wav_file.getnchannels() == 2  # Custom, not 1
+    
+    def test_write_clip_falls_back_to_defaults(self, tmp_path):
+        """Test that write_clip uses instance defaults when custom params not provided."""
+        writer = WAVWriter(
+            output_dir=str(tmp_path),
+            sample_rate=24000,
+            sample_width=2,
+            channels=2
+        )
+        
+        test_data = np.array([i for i in range(1000)], dtype=np.int16)
+        wav_path = writer.write_clip(test_data, filename="default_config.wav")
+        
+        # Verify the WAV file uses instance defaults
+        with wave.open(wav_path, 'rb') as wav_file:
+            assert wav_file.getframerate() == 24000
+            assert wav_file.getsampwidth() == 2
+            assert wav_file.getnchannels() == 2

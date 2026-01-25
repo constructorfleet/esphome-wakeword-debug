@@ -36,7 +36,10 @@ class WAVWriter:
         self,
         audio_data: np.ndarray,
         filename: Optional[str] = None,
-        metadata: Optional[dict] = None
+        metadata: Optional[dict] = None,
+        sample_rate: Optional[int] = None,
+        sample_width: Optional[int] = None,
+        channels: Optional[int] = None
     ) -> str:
         """
         Write audio data to a WAV file.
@@ -45,10 +48,18 @@ class WAVWriter:
             audio_data: numpy array of audio samples
             filename: Optional filename (generated if not provided)
             metadata: Optional metadata dictionary
+            sample_rate: Optional sample rate (uses instance default if not provided)
+            sample_width: Optional sample width (uses instance default if not provided)
+            channels: Optional channels (uses instance default if not provided)
         
         Returns:
             Path to the written file
         """
+        # Use provided parameters or fall back to instance defaults
+        rate = sample_rate if sample_rate is not None else self.sample_rate
+        width = sample_width if sample_width is not None else self.sample_width
+        chans = channels if channels is not None else self.channels
+        
         if filename is None:
             timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
             filename = f"wake_event_{timestamp}.wav"
@@ -57,20 +68,21 @@ class WAVWriter:
         
         try:
             with wave.open(str(filepath), 'wb') as wav_file:
-                wav_file.setnchannels(self.channels)
-                wav_file.setsampwidth(self.sample_width)
-                wav_file.setframerate(self.sample_rate)
+                wav_file.setnchannels(chans)
+                wav_file.setsampwidth(width)
+                wav_file.setframerate(rate)
                 
                 # Convert numpy array to bytes
                 audio_bytes = audio_data.tobytes()
                 wav_file.writeframes(audio_bytes)
             
             file_size = filepath.stat().st_size
-            duration = len(audio_data) / self.sample_rate
+            duration = len(audio_data) / (rate * chans)
             
             logger.info(
                 f"Wrote WAV file: {filepath.name} "
-                f"(size={file_size} bytes, duration={duration:.2f}s)"
+                f"(size={file_size} bytes, duration={duration:.2f}s, "
+                f"{rate}Hz, {width * 8}-bit, {chans} channel(s))"
             )
             
             # Write metadata if provided
