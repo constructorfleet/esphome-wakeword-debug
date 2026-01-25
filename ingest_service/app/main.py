@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -16,6 +15,7 @@ from .audio_buffer import AudioBuffer, MultiAssistantAudioBuffer
 from .wav_writer import WAVWriter
 from .mqtt_publisher import MQTTPublisher
 from .mqtt_subscriber import MQTTSubscriber
+from . import clip_db
 
 # Configure logging
 logging.basicConfig(
@@ -33,8 +33,13 @@ app = FastAPI(
 
 # UI and clip storage paths
 CLIP_BASE_DIR = Path(settings.OUTPUT_DIR).resolve()
+CLIP_DB_PATH = Path(settings.CLIP_DB_PATH).resolve()
 STATIC_DIR = Path(__file__).parent / "static"
-CLIP_LABELS = {"true_positive", "false_positive"}
+CLIP_LABELS = {
+    clip_db.LABEL_POSITIVE,
+    clip_db.LABEL_FALSE_POSITIVE,
+    clip_db.LABEL_UNKNOWN,
+}
 
 # Serve the review UI
 if STATIC_DIR.exists():
@@ -102,19 +107,7 @@ def _parse_datetime(value: str) -> datetime:
 
 
 def _clip_metadata(wav_path: Path) -> dict:
-    # Ensure wav_path is within CLIP_BASE_DIR before deriving metadata path
-    try:
-        wav_path.resolve().relative_to(CLIP_BASE_DIR)
-    except ValueError:
-        return {}
-    
     metadata_path = wav_path.with_suffix(".json")
-    # Validate the derived metadata path is also within CLIP_BASE_DIR
-    try:
-        metadata_path.resolve().relative_to(CLIP_BASE_DIR)
-    except ValueError:
-        return {}
-    
     if metadata_path.exists():
         try:
             with open(metadata_path, "r") as metadata_file:
@@ -134,58 +127,34 @@ def _clip_timestamp(metadata: dict, wav_path: Path) -> datetime:
     return datetime.fromtimestamp(wav_path.stat().st_mtime, tz=timezone.utc)
 
 
-def _safe_clip_path(filename: str) -> Path:
-    safe_name = Path(filename).name
-    if safe_name != filename or safe_name in {".", ".."}:
-        raise HTTPException(status_code=400, detail="Invalid clip name")
-    candidate = (CLIP_BASE_DIR / safe_name).resolve()
+def _clip_path_from_filename(filename: str) -> Path:
+    candidate = (CLIP_BASE_DIR / filename).resolve()
     try:
         candidate.relative_to(CLIP_BASE_DIR)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid clip name") from exc
-    if candidate.parent != CLIP_BASE_DIR:
-        raise HTTPException(status_code=400, detail="Invalid clip name")
+        raise HTTPException(status_code=400, detail="Invalid clip path") from exc
     if candidate.suffix.lower() != ".wav":
-        raise HTTPException(status_code=400, detail="Invalid clip name")
+        raise HTTPException(status_code=400, detail="Invalid clip path")
     if not candidate.exists():
         raise HTTPException(status_code=404, detail="Clip not found")
     return candidate
 
 
-def _safe_label_dir(label: str) -> Path:
-    # Ensure label is a simple directory name without path separators
-    if not label or "/" in label or "\\" in label:
-        raise HTTPException(status_code=400, detail="Invalid label")
-    candidate = (CLIP_BASE_DIR / label).resolve()
-    try:
-        candidate.relative_to(CLIP_BASE_DIR)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid label") from exc
-    return candidate
-
-
-def _unique_target_path(target_path: Path) -> Path:
-    # Validate input path is within CLIP_BASE_DIR
-    try:
-        target_path.resolve().relative_to(CLIP_BASE_DIR)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid target path") from exc
-    
-    if not target_path.exists():
-        return target_path
-    stem = target_path.stem
-    suffix = target_path.suffix
-    counter = 1
-    while True:
-        candidate = target_path.with_name(f"{stem}_{counter}{suffix}")
-        # Validate each derived candidate path is within CLIP_BASE_DIR
-        try:
-            candidate.resolve().relative_to(CLIP_BASE_DIR)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid target path") from exc
-        if not candidate.exists():
-            return candidate
-        counter += 1
+def _sync_clips_from_disk() -> None:
+    if not CLIP_BASE_DIR.exists():
+        return
+    for wav_path in CLIP_BASE_DIR.glob("*.wav"):
+        metadata = _clip_metadata(wav_path)
+        timestamp = _clip_timestamp(metadata, wav_path)
+        clip_db.insert_clip(
+            CLIP_DB_PATH,
+            filename=wav_path.name,
+            timestamp=timestamp.isoformat().replace("+00:00", "Z"),
+            assistant_id=metadata.get("assistant_id"),
+            duration=metadata.get("duration"),
+            sample_rate=metadata.get("sample_rate"),
+            label=clip_db.LABEL_UNKNOWN,
+        )
 
 
 async def handle_audio_data(assistant_id: str, audio_data: bytes) -> None:
@@ -288,6 +257,16 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
             sample_width=sample_width,
             channels=channels
         )
+
+        clip_db.insert_clip(
+            CLIP_DB_PATH,
+            filename=Path(wav_path).name,
+            timestamp=timestamp.replace("+00:00", "Z"),
+            assistant_id=assistant_id,
+            duration=clip_metadata.get("duration"),
+            sample_rate=sample_rate,
+            label=clip_db.LABEL_UNKNOWN,
+        )
         
         # Publish MQTT event
         mqtt.publish_wake_event(wav_path, clip_metadata)
@@ -312,10 +291,13 @@ async def startup_event():
     logger.info(f"Sample Rate: {settings.SAMPLE_RATE} Hz")
     logger.info(f"Buffer Duration: {settings.BUFFER_DURATION_SECONDS}s")
     logger.info(f"Output Directory: {settings.OUTPUT_DIR}")
+    logger.info(f"Clip DB Path: {CLIP_DB_PATH}")
     
     # Initialize components
     get_audio_buffer()
     get_wav_writer()
+    clip_db.init_db(CLIP_DB_PATH)
+    _sync_clips_from_disk()
     
     # Connect to MQTT broker (publisher)
     mqtt = get_mqtt_publisher()
@@ -462,6 +444,16 @@ async def trigger_wake_event(
             sample_width=sample_width,
             channels=channels
         )
+
+        clip_db.insert_clip(
+            CLIP_DB_PATH,
+            filename=Path(wav_path).name,
+            timestamp=timestamp.replace("+00:00", "Z"),
+            assistant_id=assistant_id,
+            duration=metadata.get("duration"),
+            sample_rate=sample_rate,
+            label=clip_db.LABEL_UNKNOWN,
+        )
         
         # Publish MQTT event
         mqtt_published = mqtt.publish_wake_event(wav_path, metadata)
@@ -552,104 +544,77 @@ async def cleanup_old_files(max_age_days: int = 7):
 
 
 @app.get("/api/clips")
-async def list_clips(start: Optional[str] = None, end: Optional[str] = None):
-    """List unreviewed audio clips with optional datetime filtering."""
-    if not CLIP_BASE_DIR.exists():
-        return {"clips": []}
-
+async def list_clips(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    label: Optional[str] = clip_db.LABEL_UNKNOWN,
+):
+    """List audio clips with optional datetime filtering."""
     start_dt = _parse_datetime(start) if start else None
     end_dt = _parse_datetime(end) if end else None
 
+    start_iso = start_dt.isoformat().replace("+00:00", "Z") if start_dt else None
+    end_iso = end_dt.isoformat().replace("+00:00", "Z") if end_dt else None
+
+    rows = clip_db.list_clips(CLIP_DB_PATH, start=start_iso, end=end_iso, label=label)
     clips = []
-    for wav_path in CLIP_BASE_DIR.glob("*.wav"):
-        metadata = _clip_metadata(wav_path)
-        timestamp_dt = _clip_timestamp(metadata, wav_path)
-
-        if start_dt and timestamp_dt < start_dt:
-            continue
-        if end_dt and timestamp_dt > end_dt:
-            continue
-
+    for row in rows:
         clips.append(
             {
-                "id": wav_path.name,
-                "filename": wav_path.name,
-                "timestamp": timestamp_dt.isoformat().replace("+00:00", "Z"),
-                "duration_seconds": metadata.get("duration"),
-                "assistant_id": metadata.get("assistant_id"),
-                "sample_rate": metadata.get("sample_rate"),
-                "audio_url": f"/api/clips/{wav_path.name}/audio",
+                "id": row["id"],
+                "filename": row["filename"],
+                "timestamp": row["timestamp"],
+                "duration_seconds": row["duration"],
+                "assistant_id": row["assistant_id"],
+                "sample_rate": row["sample_rate"],
+                "label": row["label"],
+                "audio_url": f"/api/clips/{row['id']}/audio",
             }
         )
 
-    clips.sort(key=lambda item: item["timestamp"], reverse=True)
     return {"clips": clips}
 
 
-@app.get("/api/clips/{clip_name}/audio")
-async def get_clip_audio(
-    clip_name: str = FastAPIPath(..., pattern=r"^[^/\\\\]+\\.wav$")
-):
+@app.get("/api/clips/{clip_id}/audio")
+async def get_clip_audio(clip_id: int = FastAPIPath(..., ge=1)):
     """Stream a WAV clip."""
-    wav_path = _safe_clip_path(clip_name)
+    row = clip_db.get_clip(CLIP_DB_PATH, clip_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    wav_path = _clip_path_from_filename(row["filename"])
     return FileResponse(wav_path)
 
 
-@app.post("/api/clips/{clip_name}/label")
+@app.post("/api/clips/{clip_id}/label")
 async def label_clip(
     payload: ClipLabelRequest,
-    clip_name: str = FastAPIPath(..., pattern=r"^[^/\\\\]+\\.wav$"),
+    clip_id: int = FastAPIPath(..., ge=1),
 ):
-    """Label and move a clip into a reviewed subdirectory."""
+    """Label a clip in the database."""
     label = payload.label
     if label not in CLIP_LABELS:
         raise HTTPException(status_code=400, detail="Invalid label")
 
-    source_path = _safe_clip_path(clip_name)
-    target_dir = _safe_label_dir(label)
-    target_dir.mkdir(parents=True, exist_ok=True)
+    updated = clip_db.update_label(CLIP_DB_PATH, clip_id, label)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Clip not found")
 
-    target_path = _unique_target_path(target_dir / source_path.name)
-    
-    # Validate source and target paths are within CLIP_BASE_DIR before file operations
-    try:
-        source_path.resolve().relative_to(CLIP_BASE_DIR)
-        target_path.resolve().relative_to(CLIP_BASE_DIR)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid path") from exc
-    
-    # Read metadata before moving the file
-    metadata = _clip_metadata(source_path)
-    metadata["label"] = label
-    metadata["reviewed_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
-
-    metadata_path = source_path.with_suffix(".json")
-    target_metadata_path = target_path.with_suffix(".json")
-    
-    # Validate metadata paths are within CLIP_BASE_DIR
-    try:
-        metadata_path.resolve().relative_to(CLIP_BASE_DIR)
-        target_metadata_path.resolve().relative_to(CLIP_BASE_DIR)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid metadata path") from exc
-    
-    # Move the WAV file
-    shutil.move(str(source_path), str(target_path))
-    
-    # Move the metadata file if it exists
-    if metadata_path.exists():
-        shutil.move(str(metadata_path), str(target_metadata_path))
-
-    # Write updated metadata to the new location
-    try:
-        with open(target_metadata_path, "w") as metadata_file:
-            json.dump(metadata, metadata_file, indent=2)
-    except OSError:
-        logger.warning("Failed to write metadata for %s", target_path.name)
+    row = clip_db.get_clip(CLIP_DB_PATH, clip_id)
+    if row:
+        wav_path = _clip_path_from_filename(row["filename"])
+        metadata = _clip_metadata(wav_path)
+        metadata["label"] = label
+        metadata["reviewed_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        metadata_path = wav_path.with_suffix(".json")
+        try:
+            with open(metadata_path, "w") as metadata_file:
+                json.dump(metadata, metadata_file, indent=2)
+        except OSError:
+            logger.warning("Failed to write metadata for %s", wav_path.name)
 
     return {
         "success": True,
-        "clip": target_path.name,
+        "clip_id": clip_id,
         "label": label,
     }
 

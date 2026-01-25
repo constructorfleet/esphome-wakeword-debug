@@ -1,10 +1,11 @@
 type Clip = {
-  id: string;
+  id: number;
   filename: string;
   timestamp: string;
   duration_seconds: number | null;
   assistant_id: string | null;
   sample_rate: number | null;
+  label: string | null;
   audio_url: string;
 };
 
@@ -119,10 +120,10 @@ const render = (clips: Clip[]) => {
       falseBtn.disabled = locked;
     };
 
-    const labelClip = async (label: "true_positive" | "false_positive") => {
+    const labelClip = async (label: "Positive" | "False Positive") => {
       lockButtons(true);
       try {
-        const response = await fetch(`/api/clips/${encodeURIComponent(clip.filename)}/label`, {
+        const response = await fetch(`/api/clips/${clip.id}/label`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ label }),
@@ -142,8 +143,8 @@ const render = (clips: Clip[]) => {
       }
     };
 
-    trueBtn.addEventListener("click", () => labelClip("true_positive"));
-    falseBtn.addEventListener("click", () => labelClip("false_positive"));
+    trueBtn.addEventListener("click", () => labelClip("Positive"));
+    falseBtn.addEventListener("click", () => labelClip("False Positive"));
 
     actions.appendChild(trueBtn);
     actions.appendChild(falseBtn);
