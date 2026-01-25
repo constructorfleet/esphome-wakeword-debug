@@ -12,7 +12,7 @@
         <div>
           <p class="eyebrow">Wakeword Review</p>
           <h1>Audio Clip Triage Console</h1>
-          <p class="subtitle">Listen, label, and move on. Clips disappear once reviewed.</p>
+          <p class="subtitle">Listen, label, and organize your audio clips.</p>
         </div>
         <div class="stats">
           <div class="stat">
@@ -35,8 +35,26 @@
           <label for="end">End</label>
           <input id="end" type="datetime-local" />
         </div>
-        <button id="apply" class="primary">Apply Range</button>
+        <div class="field">
+          <label for="label-filter">Label</label>
+          <select id="label-filter">
+            <option value="all">All Labels</option>
+            <option value="Unknown">Unknown</option>
+            <option value="Positive">True Positive</option>
+            <option value="False Positive">False Positive</option>
+            <option value="False Negative">False Negative</option>
+            <option value="Background Noise">Background Noise</option>
+          </select>
+        </div>
+        <div class="field checkbox-field">
+          <label for="show-deleted">
+            <input id="show-deleted" type="checkbox" />
+            Show Deleted
+          </label>
+        </div>
+        <button id="apply" class="primary">Apply Filters</button>
         <button id="clear" class="ghost">Clear</button>
+        <button id="download" class="download">⬇ Download ZIP</button>
         <div class="spacer"></div>
         <button id="refresh" class="ghost">Refresh</button>
       </section>
