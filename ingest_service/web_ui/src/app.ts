@@ -58,6 +58,10 @@ const setRangeLabel = () => {
   }
 };
 
+const isUnlabeled = (clip: Clip): boolean => {
+  return !clip.label || clip.label === "Unknown";
+};
+
 const buildQuery = () => {
   const params = new URLSearchParams();
   if (startInput.value) {
@@ -81,7 +85,7 @@ const render = (clips: Clip[]) => {
   countEl.textContent = clips.length.toString();
   
   // Count unlabeled clips
-  const unlabeledCount = clips.filter(clip => !clip.label || clip.label === "Unknown").length;
+  const unlabeledCount = clips.filter(isUnlabeled).length;
   unlabeledCountEl.textContent = unlabeledCount.toString();
   
   if (clips.length === 0) {
@@ -98,8 +102,7 @@ const render = (clips: Clip[]) => {
     }
     
     // Add visual indicator for unlabeled clips
-    const isUnlabeled = !clip.label || clip.label === "Unknown";
-    if (isUnlabeled) {
+    if (isUnlabeled(clip)) {
       card.classList.add("unlabeled");
     }
 
@@ -121,10 +124,10 @@ const render = (clips: Clip[]) => {
     const labelBadge = document.createElement("span");
     labelBadge.className = "badge label-badge";
     const labelText = clip.label ?? "Unknown";
-    const isLabeled = labelText !== "Unknown";
+    const wasUnlabeled = isUnlabeled(clip);
     
     // Add a visual indicator for labeled vs unlabeled
-    if (isLabeled) {
+    if (!wasUnlabeled) {
       labelBadge.textContent = `✓ ${labelText}`;
     } else {
       labelBadge.textContent = `⚠ ${labelText}`;
@@ -199,10 +202,25 @@ const render = (clips: Clip[]) => {
         if (!response.ok) {
           throw new Error("Failed to label clip");
         }
+        
+        // Update clip label
+        const wasUnlabeled = isUnlabeled(clip);
+        clip.label = label;
+        
         // Update the label badge with visual indicator
         labelBadge.textContent = `✓ ${label}`;
         labelBadge.setAttribute("data-label", label);
         labelBadge.classList.remove("unlabeled");
+        
+        // Update the card styling
+        card.classList.remove("unlabeled");
+        
+        // Update unlabeled count if it changed from unlabeled to labeled
+        if (wasUnlabeled) {
+          const currentCount = parseInt(unlabeledCountEl.textContent || "0");
+          unlabeledCountEl.textContent = Math.max(0, currentCount - 1).toString();
+        }
+        
         lockButtons(false);
       } catch (error) {
         console.error(error);
