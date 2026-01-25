@@ -1,3 +1,22 @@
+FROM node:20-slim AS webui-builder
+
+WORKDIR /build
+
+# Copy web UI source files
+COPY web_ui/package*.json ./web_ui/
+COPY web_ui/tsconfig.json ./web_ui/
+COPY web_ui/.eslintrc.cjs ./web_ui/
+COPY web_ui/.prettierrc.json ./web_ui/
+COPY web_ui/src ./web_ui/src
+
+# Create the app/static directory structure for the build output
+RUN mkdir -p app/static
+
+# Install dependencies and build the web UI
+WORKDIR /build/web_ui
+RUN npm ci && npm run build
+
+# Python runtime stage
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -13,6 +32,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ ./app/
+
+# Copy built web UI from the builder stage
+COPY --from=webui-builder /build/app/static ./app/static
 
 # Create directory for audio clips
 RUN mkdir -p /app/audio_clips
