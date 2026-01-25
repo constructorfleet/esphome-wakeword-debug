@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Path as FastAPIPath
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -135,10 +135,10 @@ def _clip_timestamp(metadata: dict, wav_path: Path) -> datetime:
 
 
 def _safe_clip_path(filename: str) -> Path:
-    pure = Path(filename)
-    if pure.is_absolute() or len(pure.parts) != 1 or pure.name in {".", ".."}:
+    safe_name = Path(filename).name
+    if safe_name != filename or safe_name in {".", ".."}:
         raise HTTPException(status_code=400, detail="Invalid clip name")
-    candidate = (CLIP_BASE_DIR / pure.name).resolve()
+    candidate = (CLIP_BASE_DIR / safe_name).resolve()
     try:
         candidate.relative_to(CLIP_BASE_DIR)
     except ValueError as exc:
@@ -587,14 +587,19 @@ async def list_clips(start: Optional[str] = None, end: Optional[str] = None):
 
 
 @app.get("/api/clips/{clip_name}/audio")
-async def get_clip_audio(clip_name: str):
+async def get_clip_audio(
+    clip_name: str = FastAPIPath(..., pattern=r"^[^/\\\\]+\\.wav$")
+):
     """Stream a WAV clip."""
     wav_path = _safe_clip_path(clip_name)
     return FileResponse(wav_path)
 
 
 @app.post("/api/clips/{clip_name}/label")
-async def label_clip(clip_name: str, payload: ClipLabelRequest):
+async def label_clip(
+    payload: ClipLabelRequest,
+    clip_name: str = FastAPIPath(..., pattern=r"^[^/\\\\]+\\.wav$"),
+):
     """Label and move a clip into a reviewed subdirectory."""
     label = payload.label
     if label not in CLIP_LABELS:
