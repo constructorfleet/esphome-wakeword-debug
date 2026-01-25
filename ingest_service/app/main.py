@@ -129,6 +129,10 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
         pre_duration = settings.PRE_WAKE_DURATION_SECONDS
         post_duration = settings.POST_WAKE_DURATION_SECONDS
         
+        # Wait for POST_WAKE_DURATION_SECONDS to capture audio after wake event
+        logger.info(f"Waiting {post_duration}s to capture post-wake audio for assistant {assistant_id}")
+        await asyncio.sleep(post_duration)
+        
         # Extract clip from buffer for this assistant
         clip = await buffer.get_clip(
             assistant_id=assistant_id,
@@ -295,6 +299,10 @@ async def trigger_wake_event(
         buffer = get_audio_buffer()
         writer = get_wav_writer()
         mqtt = get_mqtt_publisher()
+        
+        # Wait for POST_WAKE_DURATION_SECONDS to capture audio after wake event
+        logger.info(f"Waiting {post_duration}s to capture post-wake audio for assistant {assistant_id}")
+        await asyncio.sleep(post_duration)
         
         # Extract clip from buffer for this assistant
         clip = await buffer.get_clip(
