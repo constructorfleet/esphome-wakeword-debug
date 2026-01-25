@@ -1,9 +1,14 @@
-import logging
 import asyncio
-from datetime import datetime
+import json
+import logging
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import uvicorn
 
 from .config import settings
@@ -26,6 +31,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# UI and clip storage paths
+CLIP_BASE_DIR = Path(settings.OUTPUT_DIR).resolve()
+STATIC_DIR = Path(__file__).parent / "static"
+CLIP_LABELS = {"true_positive", "false_positive"}
+
+# Serve the review UI
+if STATIC_DIR.exists():
+    app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+
 # Initialize components (lazy initialization)
 audio_buffer: Optional[MultiAssistantAudioBuffer] = None
 wav_writer: Optional[WAVWriter] = None
@@ -39,6 +53,10 @@ active_connections: list[WebSocket] = []
 # MQTT callbacks run in a separate thread and need to schedule coroutines
 # on the main event loop using asyncio.run_coroutine_threadsafe().
 main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+class ClipLabelRequest(BaseModel):
+    label: str
 
 
 def get_audio_buffer() -> MultiAssistantAudioBuffer:
@@ -71,6 +89,59 @@ def get_mqtt_subscriber() -> MQTTSubscriber:
     if mqtt_subscriber is None:
         mqtt_subscriber = MQTTSubscriber()
     return mqtt_subscriber
+
+
+def _parse_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime: {value}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _clip_metadata(wav_path: Path) -> dict:
+    metadata_path = wav_path.with_suffix(".json")
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as metadata_file:
+                return json.load(metadata_file)
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Failed to read metadata for %s", wav_path.name)
+    return {}
+
+
+def _clip_timestamp(metadata: dict, wav_path: Path) -> datetime:
+    timestamp = metadata.get("timestamp")
+    if isinstance(timestamp, str):
+        try:
+            return _parse_datetime(timestamp)
+        except HTTPException:
+            pass
+    return datetime.fromtimestamp(wav_path.stat().st_mtime, tz=timezone.utc)
+
+
+def _safe_clip_path(filename: str) -> Path:
+    candidate = (CLIP_BASE_DIR / filename).resolve()
+    if candidate.parent != CLIP_BASE_DIR or candidate.suffix.lower() != ".wav":
+        raise HTTPException(status_code=400, detail="Invalid clip name")
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="Clip not found")
+    return candidate
+
+
+def _unique_target_path(target_path: Path) -> Path:
+    if not target_path.exists():
+        return target_path
+    stem = target_path.stem
+    suffix = target_path.suffix
+    counter = 1
+    while True:
+        candidate = target_path.with_name(f"{stem}_{counter}{suffix}")
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 async def handle_audio_data(assistant_id: str, audio_data: bytes) -> None:
@@ -433,6 +504,84 @@ async def cleanup_old_files(max_age_days: int = 7):
         "success": True,
         "deleted_count": deleted_count,
         "max_age_days": max_age_days
+    }
+
+
+@app.get("/api/clips")
+async def list_clips(start: Optional[str] = None, end: Optional[str] = None):
+    """List unreviewed audio clips with optional datetime filtering."""
+    if not CLIP_BASE_DIR.exists():
+        return {"clips": []}
+
+    start_dt = _parse_datetime(start) if start else None
+    end_dt = _parse_datetime(end) if end else None
+
+    clips = []
+    for wav_path in CLIP_BASE_DIR.glob("*.wav"):
+        metadata = _clip_metadata(wav_path)
+        timestamp_dt = _clip_timestamp(metadata, wav_path)
+
+        if start_dt and timestamp_dt < start_dt:
+            continue
+        if end_dt and timestamp_dt > end_dt:
+            continue
+
+        clips.append(
+            {
+                "id": wav_path.name,
+                "filename": wav_path.name,
+                "timestamp": timestamp_dt.isoformat().replace("+00:00", "Z"),
+                "duration_seconds": metadata.get("duration"),
+                "assistant_id": metadata.get("assistant_id"),
+                "sample_rate": metadata.get("sample_rate"),
+                "audio_url": f"/api/clips/{wav_path.name}/audio",
+            }
+        )
+
+    clips.sort(key=lambda item: item["timestamp"], reverse=True)
+    return {"clips": clips}
+
+
+@app.get("/api/clips/{clip_name}/audio")
+async def get_clip_audio(clip_name: str):
+    """Stream a WAV clip."""
+    wav_path = _safe_clip_path(clip_name)
+    return FileResponse(wav_path)
+
+
+@app.post("/api/clips/{clip_name}/label")
+async def label_clip(clip_name: str, payload: ClipLabelRequest):
+    """Label and move a clip into a reviewed subdirectory."""
+    label = payload.label
+    if label not in CLIP_LABELS:
+        raise HTTPException(status_code=400, detail="Invalid label")
+
+    source_path = _safe_clip_path(clip_name)
+    target_dir = CLIP_BASE_DIR / label
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    target_path = _unique_target_path(target_dir / source_path.name)
+    shutil.move(str(source_path), str(target_path))
+
+    metadata = _clip_metadata(source_path)
+    metadata["label"] = label
+    metadata["reviewed_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+    metadata_path = source_path.with_suffix(".json")
+    target_metadata_path = target_path.with_suffix(".json")
+    if metadata_path.exists():
+        shutil.move(str(metadata_path), str(target_metadata_path))
+
+    try:
+        with open(target_metadata_path, "w") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2)
+    except OSError:
+        logger.warning("Failed to write metadata for %s", target_path.name)
+
+    return {
+        "success": True,
+        "clip": target_path.name,
+        "label": label,
     }
 
 
