@@ -6,6 +6,7 @@ type Clip = {
   assistant_id: string | null;
   sample_rate: number | null;
   label: string | null;
+  deleted: boolean;
   audio_url: string;
 };
 
@@ -20,8 +21,11 @@ const rangeEl = document.getElementById("range-label") as HTMLSpanElement;
 
 const startInput = document.getElementById("start") as HTMLInputElement;
 const endInput = document.getElementById("end") as HTMLInputElement;
+const labelFilter = document.getElementById("label-filter") as HTMLSelectElement;
+const showDeletedCheckbox = document.getElementById("show-deleted") as HTMLInputElement;
 const applyBtn = document.getElementById("apply") as HTMLButtonElement;
 const clearBtn = document.getElementById("clear") as HTMLButtonElement;
+const downloadBtn = document.getElementById("download") as HTMLButtonElement;
 const refreshBtn = document.getElementById("refresh") as HTMLButtonElement;
 
 const formatDate = (value: string) => {
@@ -61,6 +65,12 @@ const buildQuery = () => {
   if (endInput.value) {
     params.set("end", new Date(endInput.value).toISOString());
   }
+  if (labelFilter.value !== "all") {
+    params.set("label", labelFilter.value);
+  }
+  if (showDeletedCheckbox.checked) {
+    params.set("include_deleted", "true");
+  }
   const query = params.toString();
   return query ? `?${query}` : "";
 };
@@ -77,6 +87,9 @@ const render = (clips: Clip[]) => {
   for (const clip of clips) {
     const card = document.createElement("div");
     card.className = "clip-card";
+    if (clip.deleted) {
+      card.classList.add("deleted");
+    }
 
     const header = document.createElement("div");
     header.className = "clip-header";
@@ -85,12 +98,29 @@ const render = (clips: Clip[]) => {
     title.className = "clip-title";
     title.textContent = clip.filename;
 
-    const badge = document.createElement("span");
-    badge.className = "badge";
-    badge.textContent = clip.assistant_id ?? "assistant";
+    const badges = document.createElement("div");
+    badges.className = "badges";
+
+    const assistantBadge = document.createElement("span");
+    assistantBadge.className = "badge";
+    assistantBadge.textContent = clip.assistant_id ?? "assistant";
+    badges.appendChild(assistantBadge);
+
+    const labelBadge = document.createElement("span");
+    labelBadge.className = "badge label-badge";
+    labelBadge.textContent = clip.label ?? "Unknown";
+    labelBadge.setAttribute("data-label", clip.label ?? "Unknown");
+    badges.appendChild(labelBadge);
+
+    if (clip.deleted) {
+      const deletedBadge = document.createElement("span");
+      deletedBadge.className = "badge deleted-badge";
+      deletedBadge.textContent = "Deleted";
+      badges.appendChild(deletedBadge);
+    }
 
     header.appendChild(title);
-    header.appendChild(badge);
+    header.appendChild(badges);
 
     const meta = document.createElement("div");
     meta.className = "clip-meta";
@@ -107,20 +137,37 @@ const render = (clips: Clip[]) => {
     const actions = document.createElement("div");
     actions.className = "actions";
 
-    const trueBtn = document.createElement("button");
-    trueBtn.className = "true";
-    trueBtn.textContent = "True Positive";
+    const positiveBtn = document.createElement("button");
+    positiveBtn.className = "positive";
+    positiveBtn.textContent = "✓ True Positive";
 
-    const falseBtn = document.createElement("button");
-    falseBtn.className = "false";
-    falseBtn.textContent = "False Positive";
+    const falsePositiveBtn = document.createElement("button");
+    falsePositiveBtn.className = "false-positive";
+    falsePositiveBtn.textContent = "✗ False Positive";
+
+    const falseNegativeBtn = document.createElement("button");
+    falseNegativeBtn.className = "false-negative";
+    falseNegativeBtn.textContent = "⊘ False Negative";
+
+    const backgroundNoiseBtn = document.createElement("button");
+    backgroundNoiseBtn.className = "background-noise";
+    backgroundNoiseBtn.textContent = "♪ Background Noise";
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "delete";
+    deleteBtn.textContent = clip.deleted ? "↺ Undelete" : "🗑 Delete";
 
     const lockButtons = (locked: boolean) => {
-      trueBtn.disabled = locked;
-      falseBtn.disabled = locked;
+      positiveBtn.disabled = locked;
+      falsePositiveBtn.disabled = locked;
+      falseNegativeBtn.disabled = locked;
+      backgroundNoiseBtn.disabled = locked;
+      deleteBtn.disabled = locked;
     };
 
-    const labelClip = async (label: "Positive" | "False Positive") => {
+    const labelClip = async (
+      label: "Positive" | "False Positive" | "False Negative" | "Background Noise",
+    ) => {
       lockButtons(true);
       try {
         const response = await fetch(`/api/clips/${clip.id}/label`, {
@@ -131,23 +178,45 @@ const render = (clips: Clip[]) => {
         if (!response.ok) {
           throw new Error("Failed to label clip");
         }
-        card.remove();
-        const remaining = listEl.querySelectorAll(".clip-card").length;
-        countEl.textContent = remaining.toString();
-        if (remaining === 0) {
-          emptyEl.classList.remove("hidden");
-        }
+        // Update the label badge
+        labelBadge.textContent = label;
+        labelBadge.setAttribute("data-label", label);
+        lockButtons(false);
       } catch (error) {
         console.error(error);
         lockButtons(false);
       }
     };
 
-    trueBtn.addEventListener("click", () => labelClip("Positive"));
-    falseBtn.addEventListener("click", () => labelClip("False Positive"));
+    const toggleDelete = async () => {
+      lockButtons(true);
+      try {
+        const endpoint = clip.deleted ? "undelete" : "delete";
+        const response = await fetch(`/api/clips/${clip.id}/${endpoint}`, {
+          method: "POST",
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to ${endpoint} clip`);
+        }
+        // Reload the list to reflect changes
+        load();
+      } catch (error) {
+        console.error(error);
+        lockButtons(false);
+      }
+    };
 
-    actions.appendChild(trueBtn);
-    actions.appendChild(falseBtn);
+    positiveBtn.addEventListener("click", () => labelClip("Positive"));
+    falsePositiveBtn.addEventListener("click", () => labelClip("False Positive"));
+    falseNegativeBtn.addEventListener("click", () => labelClip("False Negative"));
+    backgroundNoiseBtn.addEventListener("click", () => labelClip("Background Noise"));
+    deleteBtn.addEventListener("click", toggleDelete);
+
+    actions.appendChild(positiveBtn);
+    actions.appendChild(falsePositiveBtn);
+    actions.appendChild(falseNegativeBtn);
+    actions.appendChild(backgroundNoiseBtn);
+    actions.appendChild(deleteBtn);
 
     card.appendChild(header);
     card.appendChild(meta);
@@ -177,6 +246,11 @@ clearBtn.addEventListener("click", () => {
   startInput.value = "";
   endInput.value = "";
   load();
+});
+
+downloadBtn.addEventListener("click", () => {
+  const query = buildQuery();
+  window.location.href = `/api/clips/download${query}`;
 });
 
 refreshBtn.addEventListener("click", () => {

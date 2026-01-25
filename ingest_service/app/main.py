@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -41,6 +43,8 @@ STATIC_DIR = Path(__file__).parent / "static"
 CLIP_LABELS = {
     clip_db.LABEL_POSITIVE,
     clip_db.LABEL_FALSE_POSITIVE,
+    clip_db.LABEL_FALSE_NEGATIVE,
+    clip_db.LABEL_BACKGROUND_NOISE,
     clip_db.LABEL_UNKNOWN,
 }
 
@@ -550,16 +554,23 @@ async def cleanup_old_files(max_age_days: int = 7):
 async def list_clips(
     start: Optional[str] = None,
     end: Optional[str] = None,
-    label: Optional[str] = clip_db.LABEL_UNKNOWN,
+    label: Optional[str] = None,
+    include_deleted: bool = False,
 ):
-    """List audio clips with optional datetime filtering."""
+    """List audio clips with optional datetime and label filtering."""
     start_dt = _parse_datetime(start) if start else None
     end_dt = _parse_datetime(end) if end else None
 
     start_iso = start_dt.isoformat().replace("+00:00", "Z") if start_dt else None
     end_iso = end_dt.isoformat().replace("+00:00", "Z") if end_dt else None
 
-    rows = clip_db.list_clips(CLIP_DB_PATH, start=start_iso, end=end_iso, label=label)
+    rows = clip_db.list_clips(
+        CLIP_DB_PATH, 
+        start=start_iso, 
+        end=end_iso, 
+        label=label,
+        include_deleted=include_deleted
+    )
     clips = []
     for row in rows:
         clips.append(
@@ -571,6 +582,7 @@ async def list_clips(
                 "assistant_id": row["assistant_id"],
                 "sample_rate": row["sample_rate"],
                 "label": row["label"],
+                "deleted": bool(row["deleted"]),
                 "audio_url": f"/api/clips/{row['id']}/audio",
             }
         )
@@ -620,6 +632,143 @@ async def label_clip(
         "clip_id": clip_id,
         "label": label,
     }
+
+
+@app.post("/api/clips/{clip_id}/delete")
+async def delete_clip(clip_id: int = FastAPIPath(..., ge=1)):
+    """Soft-delete a clip (mark as deleted without removing from database)."""
+    deleted = clip_db.soft_delete_clip(CLIP_DB_PATH, clip_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    row = clip_db.get_clip(CLIP_DB_PATH, clip_id)
+    if row:
+        wav_path = _clip_path_from_filename(row["filename"])
+        metadata = _clip_metadata(wav_path)
+        metadata["deleted"] = True
+        metadata["deleted_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        metadata_path = wav_path.with_suffix(".json")
+        try:
+            with open(metadata_path, "w") as metadata_file:
+                json.dump(metadata, metadata_file, indent=2)
+        except OSError:
+            logger.warning("Failed to write metadata for %s", wav_path.name)
+
+    return {
+        "success": True,
+        "clip_id": clip_id,
+        "deleted": True,
+    }
+
+
+@app.post("/api/clips/{clip_id}/undelete")
+async def undelete_clip(clip_id: int = FastAPIPath(..., ge=1)):
+    """Restore a soft-deleted clip."""
+    undeleted = clip_db.undelete_clip(CLIP_DB_PATH, clip_id)
+    if not undeleted:
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    row = clip_db.get_clip(CLIP_DB_PATH, clip_id)
+    if row:
+        wav_path = _clip_path_from_filename(row["filename"])
+        metadata = _clip_metadata(wav_path)
+        metadata["deleted"] = False
+        metadata["undeleted_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        metadata_path = wav_path.with_suffix(".json")
+        try:
+            with open(metadata_path, "w") as metadata_file:
+                json.dump(metadata, metadata_file, indent=2)
+        except OSError:
+            logger.warning("Failed to write metadata for %s", wav_path.name)
+
+    return {
+        "success": True,
+        "clip_id": clip_id,
+        "deleted": False,
+    }
+
+
+@app.get("/api/clips/download")
+async def download_clips(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    label: Optional[str] = None,
+    include_deleted: bool = False,
+):
+    """Download clips as a zip file organized by label."""
+    start_dt = _parse_datetime(start) if start else None
+    end_dt = _parse_datetime(end) if end else None
+
+    start_iso = start_dt.isoformat().replace("+00:00", "Z") if start_dt else None
+    end_iso = end_dt.isoformat().replace("+00:00", "Z") if end_dt else None
+
+    # Get clips matching the filter
+    rows = clip_db.list_clips(
+        CLIP_DB_PATH,
+        start=start_iso,
+        end=end_iso,
+        label=label,
+        include_deleted=include_deleted
+    )
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No clips found matching the criteria")
+
+    # Create a temporary zip file
+    temp_dir = Path(tempfile.mkdtemp())
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+    label_suffix = f"_{label.replace(' ', '_')}" if label else "_all"
+    zip_filename = f"clips{label_suffix}_{timestamp}.zip"
+    zip_path = temp_dir / zip_filename
+
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Organize clips by label
+            for row in rows:
+                clip_label = row["label"] or "Unknown"
+                label_dir = clip_label.replace(" ", "_")
+                
+                # Get the WAV file
+                wav_path = _clip_path_from_filename(row["filename"])
+                if not wav_path.exists():
+                    logger.warning(f"WAV file not found: {wav_path}")
+                    continue
+                
+                # Add WAV file to zip
+                arcname = f"{label_dir}/{wav_path.name}"
+                zipf.write(wav_path, arcname)
+                
+                # Add metadata JSON if it exists
+                metadata_path = wav_path.with_suffix(".json")
+                if metadata_path.exists():
+                    arcname = f"{label_dir}/{metadata_path.name}"
+                    zipf.write(metadata_path, arcname)
+
+        # Return the zip file with background task to cleanup temp directory
+        return FileResponse(
+            path=str(zip_path),
+            media_type="application/zip",
+            filename=zip_filename,
+            headers={
+                "Content-Disposition": f"attachment; filename={zip_filename}"
+            },
+            background=lambda: _cleanup_temp_dir(temp_dir)
+        )
+    except Exception as e:
+        # Clean up on error
+        _cleanup_temp_dir(temp_dir)
+        logger.error(f"Error creating zip file: {e}")
+        raise HTTPException(status_code=500, detail="Error creating zip file. Please try again.")
+
+
+def _cleanup_temp_dir(temp_dir: Path) -> None:
+    """Clean up temporary directory and its contents."""
+    try:
+        import shutil
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+    except Exception as e:
+        logger.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
 
 
 def main():

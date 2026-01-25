@@ -108,6 +108,12 @@ h1 {
   min-width: 180px;
 }
 
+.field.checkbox-field {
+  min-width: auto;
+  flex-direction: row;
+  align-items: center;
+}
+
 label {
   font-size: 12px;
   color: var(--muted);
@@ -115,13 +121,21 @@ label {
   letter-spacing: 0.2em;
 }
 
-input[type="datetime-local"] {
+input[type="datetime-local"],
+select {
   background: #0e1320;
   border: 1px solid var(--outline);
   border-radius: 12px;
   padding: 10px 12px;
   color: var(--text);
   font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+input[type="checkbox"] {
+  margin-right: 8px;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
 }
 
 button {
@@ -144,6 +158,12 @@ button.ghost {
   background: transparent;
   border: 1px solid var(--outline);
   color: var(--text);
+}
+
+button.download {
+  background: rgba(138, 138, 255, 0.16);
+  border: 1px solid rgba(138, 138, 255, 0.4);
+  color: #c0c0ff;
 }
 
 button:hover {
@@ -203,6 +223,13 @@ button:hover {
 .clip-title {
   font-size: 16px;
   font-weight: 600;
+  flex: 1;
+}
+
+.badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .clip-meta {
@@ -223,21 +250,82 @@ button:hover {
   color: var(--accent);
 }
 
-.actions {
-  display: flex;
-  gap: 12px;
+.badge.label-badge[data-label="Positive"] {
+  background: rgba(94, 247, 192, 0.16);
+  color: var(--accent);
 }
 
-button.true {
+.badge.label-badge[data-label="False Positive"] {
+  background: rgba(255, 107, 107, 0.18);
+  color: #ffb2b2;
+}
+
+.badge.label-badge[data-label="False Negative"] {
+  background: rgba(255, 191, 0, 0.18);
+  color: #ffd966;
+}
+
+.badge.label-badge[data-label="Background Noise"] {
+  background: rgba(138, 138, 255, 0.18);
+  color: #c0c0ff;
+}
+
+.badge.label-badge[data-label="Unknown"] {
+  background: rgba(154, 163, 178, 0.18);
+  color: var(--muted);
+}
+
+.badge.deleted-badge {
+  background: rgba(255, 107, 107, 0.18);
+  color: #ffb2b2;
+}
+
+.clip-card.deleted {
+  opacity: 0.7;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.actions button {
+  flex: 1;
+  min-width: 120px;
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+button.positive {
   background: rgba(94, 247, 192, 0.16);
   color: var(--accent);
   border: 1px solid rgba(94, 247, 192, 0.4);
 }
 
-button.false {
+button.false-positive {
   background: rgba(255, 107, 107, 0.18);
   color: #ffb2b2;
   border: 1px solid rgba(255, 107, 107, 0.4);
+}
+
+button.false-negative {
+  background: rgba(255, 191, 0, 0.18);
+  color: #ffd966;
+  border: 1px solid rgba(255, 191, 0, 0.4);
+}
+
+button.background-noise {
+  background: rgba(138, 138, 255, 0.18);
+  color: #c0c0ff;
+  border: 1px solid rgba(138, 138, 255, 0.4);
+}
+
+button.delete {
+  background: rgba(154, 163, 178, 0.18);
+  color: var(--muted);
+  border: 1px solid rgba(154, 163, 178, 0.4);
 }
 
 button:disabled {
