@@ -142,3 +142,91 @@ class TestAudioBuffer:
         await asyncio.gather(*[append_task() for _ in range(10)])
         
         assert buffer.get_buffer_size() == 1000
+    
+    async def test_little_endian_32bit_decoding(self):
+        """Test that 32-bit samples are decoded as little-endian."""
+        buffer = AudioBuffer(sample_rate=16000, sample_width=4, channels=1, buffer_duration=1.0)
+        
+        # Create test data with a known value that differs in big vs little endian
+        # Value 0x12345678 in little-endian bytes: 78 56 34 12
+        test_value = 0x12345678
+        test_data = np.array([test_value], dtype='<i4')  # Explicitly little-endian
+        audio_bytes = test_data.tobytes()
+        
+        await buffer.append(audio_bytes)
+        
+        # Extract the stored value
+        assert buffer.get_buffer_size() == 1
+        # The buffer stores individual samples
+        assert buffer.buffer[0] == test_value
+    
+    async def test_little_endian_16bit_decoding(self):
+        """Test that 16-bit samples are decoded as little-endian."""
+        buffer = AudioBuffer(sample_rate=16000, sample_width=2, channels=1, buffer_duration=1.0)
+        
+        # Create test data with a known value
+        # Value 0x1234 in little-endian bytes: 34 12
+        test_value = 0x1234
+        test_data = np.array([test_value], dtype='<i2')  # Explicitly little-endian
+        audio_bytes = test_data.tobytes()
+        
+        await buffer.append(audio_bytes)
+        
+        # Extract the stored value
+        assert buffer.get_buffer_size() == 1
+        assert buffer.buffer[0] == test_value
+    
+    async def test_channel_count_validation_mono(self):
+        """Test that sample count validation works for mono audio."""
+        buffer = AudioBuffer(sample_rate=16000, sample_width=4, channels=1, buffer_duration=1.0)
+        
+        # Create test data with valid sample count (divisible by 1)
+        test_data = np.array([1, 2, 3, 4, 5], dtype='<i4')
+        audio_bytes = test_data.tobytes()
+        
+        # Should succeed
+        await buffer.append(audio_bytes)
+        assert buffer.get_buffer_size() == 5
+    
+    async def test_channel_count_validation_stereo_valid(self):
+        """Test that sample count validation works for stereo audio with valid data."""
+        buffer = AudioBuffer(sample_rate=16000, sample_width=4, channels=2, buffer_duration=1.0)
+        
+        # Create test data with even sample count (divisible by 2)
+        test_data = np.array([1, 2, 3, 4, 5, 6], dtype='<i4')
+        audio_bytes = test_data.tobytes()
+        
+        # Should succeed
+        await buffer.append(audio_bytes)
+        assert buffer.get_buffer_size() == 6
+    
+    async def test_channel_count_validation_stereo_invalid(self):
+        """Test that sample count validation fails for stereo audio with odd sample count."""
+        buffer = AudioBuffer(sample_rate=16000, sample_width=4, channels=2, buffer_duration=1.0)
+        
+        # Create test data with odd sample count (not divisible by 2)
+        test_data = np.array([1, 2, 3, 4, 5], dtype='<i4')
+        audio_bytes = test_data.tobytes()
+        
+        # Should raise ValueError
+        with pytest.raises(ValueError, match="Sample count.*not divisible by.*channels"):
+            await buffer.append(audio_bytes)
+    
+    async def test_channel_count_validation_multichannel(self):
+        """Test that sample count validation works for multi-channel audio."""
+        buffer = AudioBuffer(sample_rate=16000, sample_width=4, channels=4, buffer_duration=1.0)
+        
+        # Create test data with sample count divisible by 4
+        test_data = np.array([1, 2, 3, 4, 5, 6, 7, 8], dtype='<i4')
+        audio_bytes = test_data.tobytes()
+        
+        # Should succeed
+        await buffer.append(audio_bytes)
+        assert buffer.get_buffer_size() == 8
+        
+        # Try with invalid count (not divisible by 4)
+        test_data_invalid = np.array([1, 2, 3, 4, 5, 6, 7], dtype='<i4')
+        audio_bytes_invalid = test_data_invalid.tobytes()
+        
+        with pytest.raises(ValueError, match="Sample count.*not divisible by.*channels"):
+            await buffer.append(audio_bytes_invalid)
