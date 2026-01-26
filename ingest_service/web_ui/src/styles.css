@@ -275,6 +275,23 @@ button:hover {
   color: var(--muted);
 }
 
+.badge.label-badge.unlabeled {
+  background: rgba(255, 191, 0, 0.2);
+  color: #ffd966;
+  border: 1px solid rgba(255, 191, 0, 0.5);
+  font-weight: 600;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 191, 0, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(255, 191, 0, 0);
+  }
+}
+
 .badge.deleted-badge {
   background: rgba(255, 107, 107, 0.18);
   color: #ffb2b2;
@@ -283,6 +300,22 @@ button:hover {
 .clip-card.deleted {
   opacity: 0.7;
   border-color: rgba(255, 107, 107, 0.3);
+}
+
+.clip-card.unlabeled {
+  border-color: rgba(255, 191, 0, 0.4);
+  background: linear-gradient(160deg, rgba(40, 35, 20, 0.85), rgba(25, 20, 15, 0.95));
+}
+
+.clip-card.unlabeled::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(255, 191, 0, 0.8), transparent);
+  z-index: 1;
 }
 
 .actions {

@@ -17,6 +17,7 @@ type ClipResponse = {
 const listEl = document.getElementById("list") as HTMLDivElement;
 const emptyEl = document.getElementById("empty") as HTMLDivElement;
 const countEl = document.getElementById("clip-count") as HTMLSpanElement;
+const unlabeledCountEl = document.getElementById("unlabeled-count") as HTMLSpanElement;
 const rangeEl = document.getElementById("range-label") as HTMLSpanElement;
 
 const startInput = document.getElementById("start") as HTMLInputElement;
@@ -57,6 +58,10 @@ const setRangeLabel = () => {
   }
 };
 
+const isUnlabeled = (clip: Clip): boolean => {
+  return !clip.label || clip.label === "Unknown";
+};
+
 const buildQuery = () => {
   const params = new URLSearchParams();
   if (startInput.value) {
@@ -78,6 +83,11 @@ const buildQuery = () => {
 const render = (clips: Clip[]) => {
   listEl.innerHTML = "";
   countEl.textContent = clips.length.toString();
+
+  // Count unlabeled clips
+  const unlabeledCount = clips.filter(isUnlabeled).length;
+  unlabeledCountEl.textContent = unlabeledCount.toString();
+
   if (clips.length === 0) {
     emptyEl.classList.remove("hidden");
     return;
@@ -89,6 +99,11 @@ const render = (clips: Clip[]) => {
     card.className = "clip-card";
     if (clip.deleted) {
       card.classList.add("deleted");
+    }
+
+    // Add visual indicator for unlabeled clips
+    if (isUnlabeled(clip)) {
+      card.classList.add("unlabeled");
     }
 
     const header = document.createElement("div");
@@ -108,8 +123,17 @@ const render = (clips: Clip[]) => {
 
     const labelBadge = document.createElement("span");
     labelBadge.className = "badge label-badge";
-    labelBadge.textContent = clip.label ?? "Unknown";
-    labelBadge.setAttribute("data-label", clip.label ?? "Unknown");
+    const labelText = clip.label ?? "Unknown";
+    const wasUnlabeled = isUnlabeled(clip);
+
+    // Add a visual indicator for labeled vs unlabeled
+    if (!wasUnlabeled) {
+      labelBadge.textContent = `✓ ${labelText}`;
+    } else {
+      labelBadge.textContent = `⚠ ${labelText}`;
+      labelBadge.classList.add("unlabeled");
+    }
+    labelBadge.setAttribute("data-label", labelText);
     badges.appendChild(labelBadge);
 
     if (clip.deleted) {
@@ -178,9 +202,25 @@ const render = (clips: Clip[]) => {
         if (!response.ok) {
           throw new Error("Failed to label clip");
         }
-        // Update the label badge
-        labelBadge.textContent = label;
+
+        // Update clip label
+        const wasUnlabeled = isUnlabeled(clip);
+        clip.label = label;
+
+        // Update the label badge with visual indicator
+        labelBadge.textContent = `✓ ${label}`;
         labelBadge.setAttribute("data-label", label);
+        labelBadge.classList.remove("unlabeled");
+
+        // Update the card styling
+        card.classList.remove("unlabeled");
+
+        // Update unlabeled count if it changed from unlabeled to labeled
+        if (wasUnlabeled) {
+          const currentCount = parseInt(unlabeledCountEl.textContent || "0");
+          unlabeledCountEl.textContent = Math.max(0, currentCount - 1).toString();
+        }
+
         lockButtons(false);
       } catch (error) {
         console.error(error);
