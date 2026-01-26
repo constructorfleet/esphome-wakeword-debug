@@ -392,6 +392,10 @@ button:disabled {
   display: none;
 }
 
+.dialog-overlay.hidden {
+  display: none;
+}
+
 audio {
   width: 100%;
   filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.4));
