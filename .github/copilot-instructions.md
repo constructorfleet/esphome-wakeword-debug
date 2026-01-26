@@ -23,15 +23,15 @@ pip install -r ingest_service/requirements.txt
 **Run tests:**
 ```bash
 # From repository root
-PYTHONPATH=. python -m pytest tests/ -v
+pytest tests/ -v
 
 # With coverage
 pytest tests/ --cov=ingest_service --cov-report=html
 ```
 
 **Important Notes:**
-- Always run pytest from the repository root with `PYTHONPATH=.` to ensure proper module resolution
-- The `pytest.ini` file configures `pythonpath = .` and `asyncio_mode = auto`
+- Always run pytest from the repository root
+- The `pytest.ini` file configures `pythonpath = .` and `asyncio_mode = auto` automatically
 - Tests are located in `tests/` directory with structure mirroring `ingest_service/`
 
 ### Web UI (TypeScript/Node.js)
@@ -41,7 +41,7 @@ pytest tests/ --cov=ingest_service --cov-report=html
 **Install dependencies:**
 ```bash
 cd ingest_service/web_ui
-npm ci  # Use 'ci' for reproducible builds, not 'install'
+npm ci  # Use 'ci' for reproducible builds in CI/production
 ```
 
 **Quality checks (run in order):**
@@ -58,7 +58,8 @@ npm run build # Production build (outputs to ../app/static/)
 ```
 
 **Important Notes:**
-- Always use `npm ci` instead of `npm install` for consistent dependency versions
+- Use `npm ci` for CI/production builds to ensure consistent dependency versions
+- Use `npm install` when adding/updating dependencies in package.json
 - The build output goes to `ingest_service/app/static/` directory
 - Run all three quality checks (typecheck, lint, format:check) before committing
 
@@ -170,7 +171,7 @@ When making changes:
 
 ```bash
 # Python tests from root
-PYTHONPATH=. python -m pytest tests/ -v
+pytest tests/ -v
 
 # Web UI validation
 cd ingest_service/web_ui
