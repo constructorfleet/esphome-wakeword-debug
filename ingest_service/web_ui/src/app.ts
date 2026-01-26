@@ -28,6 +28,15 @@ const applyBtn = document.getElementById("apply") as HTMLButtonElement;
 const clearBtn = document.getElementById("clear") as HTMLButtonElement;
 const downloadBtn = document.getElementById("download") as HTMLButtonElement;
 const refreshBtn = document.getElementById("refresh") as HTMLButtonElement;
+const captureNoiseBtn = document.getElementById("capture-noise") as HTMLButtonElement;
+
+// Dialog elements
+const noiseDialog = document.getElementById("noise-dialog") as HTMLDivElement;
+const dialogClose = document.getElementById("dialog-close") as HTMLButtonElement;
+const dialogCancel = document.getElementById("dialog-cancel") as HTMLButtonElement;
+const dialogConfirm = document.getElementById("dialog-confirm") as HTMLButtonElement;
+const secondsInput = document.getElementById("seconds-input") as HTMLInputElement;
+const assistantInput = document.getElementById("assistant-input") as HTMLSelectElement;
 
 const formatDate = (value: string) => {
   const date = new Date(value);
@@ -295,6 +304,93 @@ downloadBtn.addEventListener("click", () => {
 
 refreshBtn.addEventListener("click", () => {
   load();
+});
+
+// Dialog handlers
+const openNoiseDialog = async () => {
+  // Fetch active assistants and populate dropdown
+  try {
+    const response = await fetch("/api/assistants");
+    if (response.ok) {
+      const data = await response.json();
+      const assistants = data.assistants || ["default"];
+      
+      // Clear and populate assistant dropdown
+      assistantInput.innerHTML = "";
+      for (const assistant of assistants) {
+        const option = document.createElement("option");
+        option.value = assistant;
+        option.textContent = assistant;
+        assistantInput.appendChild(option);
+      }
+    }
+  } catch (error) {
+    console.error("Failed to fetch assistants:", error);
+    // Fallback to default if fetch fails
+    assistantInput.innerHTML = "";
+    const option = document.createElement("option");
+    option.value = "default";
+    option.textContent = "default";
+    assistantInput.appendChild(option);
+  }
+  
+  noiseDialog.classList.remove("hidden");
+};
+
+const closeNoiseDialog = () => {
+  noiseDialog.classList.add("hidden");
+};
+
+const captureBackgroundNoise = async () => {
+  const seconds = parseFloat(secondsInput.value);
+  const assistantId = assistantInput.value;
+  
+  if (isNaN(seconds) || seconds <= 0) {
+    alert("Please enter a valid number of seconds");
+    return;
+  }
+  
+  // Disable confirm button during request
+  dialogConfirm.disabled = true;
+  
+  try {
+    const response = await fetch("/api/capture_background_noise", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seconds, assistant_id: assistantId }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || "Failed to capture background noise");
+    }
+    
+    const result = await response.json();
+    
+    // Close dialog and reload clips
+    closeNoiseDialog();
+    load();
+    
+    // Show success message (optional)
+    console.log("Background noise captured:", result);
+  } catch (error) {
+    console.error("Error capturing background noise:", error);
+    alert(error instanceof Error ? error.message : "Failed to capture background noise");
+  } finally {
+    dialogConfirm.disabled = false;
+  }
+};
+
+captureNoiseBtn.addEventListener("click", openNoiseDialog);
+dialogClose.addEventListener("click", closeNoiseDialog);
+dialogCancel.addEventListener("click", closeNoiseDialog);
+dialogConfirm.addEventListener("click", captureBackgroundNoise);
+
+// Close dialog when clicking outside
+noiseDialog.addEventListener("click", (e) => {
+  if (e.target === noiseDialog) {
+    closeNoiseDialog();
+  }
 });
 
 load();

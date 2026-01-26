@@ -71,6 +71,11 @@ class ClipLabelRequest(BaseModel):
     label: str
 
 
+class CaptureBackgroundNoiseRequest(BaseModel):
+    seconds: float
+    assistant_id: str = "default"
+
+
 def get_audio_buffer() -> MultiAssistantAudioBuffer:
     """Get or create audio buffer instance."""
     global audio_buffer
@@ -384,6 +389,16 @@ async def health():
     }
 
 
+@app.get("/api/assistants")
+async def get_assistants():
+    """Get list of active assistant IDs."""
+    buffer = get_audio_buffer()
+    assistant_ids = buffer.get_assistant_ids()
+    return {
+        "assistants": assistant_ids if assistant_ids else ["default"]
+    }
+
+
 @app.post("/wake_event")
 async def trigger_wake_event(
     assistant_id: str = "default",
@@ -478,6 +493,107 @@ async def trigger_wake_event(
         raise  # Re-raise HTTPException so it's not caught by the generic handler
     except Exception as e:
         logger.error(f"Error processing wake event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/capture_background_noise")
+async def capture_background_noise(payload: CaptureBackgroundNoiseRequest):
+    """
+    Capture the last N seconds of audio and label as background noise.
+    
+    Args:
+        payload: Request containing seconds and assistant_id
+    
+    Returns:
+        Information about the saved clip
+    """
+    try:
+        seconds = payload.seconds
+        assistant_id = payload.assistant_id
+        
+        buffer = get_audio_buffer()
+        writer = get_wav_writer()
+        
+        # Validate seconds parameter
+        if seconds <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Seconds must be greater than 0"
+            )
+        
+        if seconds > settings.BUFFER_DURATION_SECONDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Seconds cannot exceed buffer duration ({settings.BUFFER_DURATION_SECONDS}s)"
+            )
+        
+        # Extract clip from buffer - capture last N seconds
+        # We use pre_duration=seconds and post_duration=0 to get the last N seconds
+        clip = await buffer.get_clip(
+            assistant_id=assistant_id,
+            pre_duration=seconds,
+            post_duration=0,
+            trigger_offset=0
+        )
+        
+        if clip is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient audio data in buffer for assistant {assistant_id}"
+            )
+        
+        # Get audio configuration for this assistant
+        audio_config = buffer.get_audio_config(assistant_id)
+        sample_rate = audio_config["sample_rate"]
+        sample_width = audio_config["sample_width"]
+        channels = audio_config["channels"]
+        
+        # Create metadata
+        timestamp = datetime.utcnow().isoformat()
+        metadata = {
+            "timestamp": timestamp,
+            "assistant_id": assistant_id,
+            "pre_duration": seconds,
+            "post_duration": 0,
+            "sample_rate": sample_rate,
+            "samples": len(clip),
+            "duration": len(clip) / (sample_rate * channels),
+            "label": clip_db.LABEL_BACKGROUND_NOISE
+        }
+        
+        # Write WAV file with assistant-specific audio configuration
+        wav_path = writer.write_clip(
+            clip,
+            metadata=metadata,
+            sample_rate=sample_rate,
+            sample_width=sample_width,
+            channels=channels
+        )
+        
+        # Insert clip into database with Background Noise label
+        clip_db.insert_clip(
+            CLIP_DB_PATH,
+            filename=Path(wav_path).name,
+            timestamp=timestamp.replace("+00:00", "Z"),
+            assistant_id=assistant_id,
+            duration=metadata.get("duration"),
+            sample_rate=sample_rate,
+            label=clip_db.LABEL_BACKGROUND_NOISE,
+        )
+        
+        logger.info(f"Background noise clip captured for assistant {assistant_id}: {wav_path}")
+        
+        return {
+            "success": True,
+            "wav_file": wav_path,
+            "metadata": metadata,
+            "label": clip_db.LABEL_BACKGROUND_NOISE
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error capturing background noise: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

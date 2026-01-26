@@ -56,6 +56,34 @@ class TestMainAPI:
         assert "buffer_duration_seconds" in data
     
     @patch('ingest_service.app.main.get_audio_buffer')
+    def test_get_assistants_endpoint(self, mock_get_buffer, client):
+        """Test get assistants endpoint."""
+        mock_buffer_instance = Mock()
+        mock_buffer_instance.get_assistant_ids.return_value = ["assistant1", "assistant2"]
+        mock_get_buffer.return_value = mock_buffer_instance
+        
+        response = client.get("/api/assistants")
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "assistants" in data
+        assert data["assistants"] == ["assistant1", "assistant2"]
+    
+    @patch('ingest_service.app.main.get_audio_buffer')
+    def test_get_assistants_empty_returns_default(self, mock_get_buffer, client):
+        """Test get assistants endpoint returns default when no assistants active."""
+        mock_buffer_instance = Mock()
+        mock_buffer_instance.get_assistant_ids.return_value = []
+        mock_get_buffer.return_value = mock_buffer_instance
+        
+        response = client.get("/api/assistants")
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "assistants" in data
+        assert data["assistants"] == ["default"]
+    
+    @patch('ingest_service.app.main.get_audio_buffer')
     @patch('ingest_service.app.main.get_wav_writer')
     @patch('ingest_service.app.main.get_mqtt_publisher')
     def test_trigger_wake_event_success(
@@ -147,6 +175,95 @@ class TestMainAPI:
         call_kwargs = mock_buffer_instance.get_clip.call_args[1]
         assert call_kwargs["pre_duration"] == 3.0
         assert call_kwargs["post_duration"] == 4.0
+    
+    @patch('ingest_service.app.main.get_audio_buffer')
+    @patch('ingest_service.app.main.get_wav_writer')
+    @patch('ingest_service.app.main.clip_db')
+    def test_capture_background_noise_success(self, mock_clip_db, mock_get_wav, mock_get_buffer):
+        """Test capturing background noise successfully."""
+        # Mock buffer returning audio clip
+        mock_clip = np.array([i for i in range(1000)], dtype=np.int16)
+        mock_buffer_instance = Mock()
+        mock_buffer_instance.get_clip = AsyncMock(return_value=mock_clip)
+        mock_buffer_instance.get_audio_config = Mock(return_value={
+            "sample_rate": 48000,
+            "sample_width": 4,
+            "channels": 1
+        })
+        mock_get_buffer.return_value = mock_buffer_instance
+        
+        # Mock WAV writer
+        mock_wav_instance = Mock()
+        mock_wav_instance.write_clip.return_value = "/path/to/background_noise.wav"
+        mock_get_wav.return_value = mock_wav_instance
+        
+        # Mock clip_db
+        mock_clip_db.insert_clip = Mock()
+        mock_clip_db.LABEL_BACKGROUND_NOISE = "Background Noise"
+        
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/capture_background_noise",
+                json={"seconds": 5.0, "assistant_id": "test_assistant"}
+            )
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["label"] == "Background Noise"
+        assert "wav_file" in data
+        
+        # Verify buffer.get_clip was called with correct params
+        mock_buffer_instance.get_clip.assert_called_once()
+        call_kwargs = mock_buffer_instance.get_clip.call_args[1]
+        assert call_kwargs["assistant_id"] == "test_assistant"
+        assert call_kwargs["pre_duration"] == 5.0
+        assert call_kwargs["post_duration"] == 0
+        assert call_kwargs["trigger_offset"] == 0
+    
+    @patch('ingest_service.app.main.get_audio_buffer')
+    @patch('ingest_service.app.main.get_wav_writer')
+    def test_capture_background_noise_invalid_seconds(self, mock_get_wav, mock_get_buffer):
+        """Test background noise capture with invalid seconds."""
+        mock_buffer_instance = Mock()
+        mock_get_buffer.return_value = mock_buffer_instance
+        mock_get_wav.return_value = Mock()
+        
+        with TestClient(app) as client:
+            # Test with negative seconds
+            response = client.post(
+                "/api/capture_background_noise",
+                json={"seconds": -1.0, "assistant_id": "default"}
+            )
+            assert response.status_code == 400
+            assert "must be greater than 0" in response.json()["detail"]
+            
+            # Test with zero seconds
+            response = client.post(
+                "/api/capture_background_noise",
+                json={"seconds": 0, "assistant_id": "default"}
+            )
+            assert response.status_code == 400
+            assert "must be greater than 0" in response.json()["detail"]
+    
+    @patch('ingest_service.app.main.get_audio_buffer')
+    @patch('ingest_service.app.main.get_wav_writer')
+    def test_capture_background_noise_insufficient_data(self, mock_get_wav, mock_get_buffer):
+        """Test background noise capture with insufficient buffer data."""
+        # Mock buffer returning None
+        mock_buffer_instance = Mock()
+        mock_buffer_instance.get_clip = AsyncMock(return_value=None)
+        mock_get_buffer.return_value = mock_buffer_instance
+        mock_get_wav.return_value = Mock()
+        
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/capture_background_noise",
+                json={"seconds": 5.0, "assistant_id": "default"}
+            )
+        
+        assert response.status_code == 400
+        assert "Insufficient audio data" in response.json()["detail"]
     
     @patch('ingest_service.app.main.get_audio_buffer')
     def test_clear_buffer_endpoint(self, mock_get_buffer, client):
