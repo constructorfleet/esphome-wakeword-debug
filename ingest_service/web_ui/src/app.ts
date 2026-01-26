@@ -314,7 +314,7 @@ const openNoiseDialog = async () => {
     if (response.ok) {
       const data = await response.json();
       const assistants = data.assistants || ["default"];
-      
+
       // Clear and populate assistant dropdown
       assistantInput.innerHTML = "";
       for (const assistant of assistants) {
@@ -333,7 +333,7 @@ const openNoiseDialog = async () => {
     option.textContent = "default";
     assistantInput.appendChild(option);
   }
-  
+
   noiseDialog.classList.remove("hidden");
 };
 
@@ -344,33 +344,33 @@ const closeNoiseDialog = () => {
 const captureBackgroundNoise = async () => {
   const seconds = parseFloat(secondsInput.value);
   const assistantId = assistantInput.value;
-  
+
   if (isNaN(seconds) || seconds <= 0) {
     alert("Please enter a valid number of seconds");
     return;
   }
-  
+
   // Disable confirm button during request
   dialogConfirm.disabled = true;
-  
+
   try {
     const response = await fetch("/api/capture_background_noise", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ seconds, assistant_id: assistantId }),
     });
-    
+
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail || "Failed to capture background noise");
     }
-    
+
     const result = await response.json();
-    
+
     // Close dialog and reload clips
     closeNoiseDialog();
     load();
-    
+
     // Show success message (optional)
     console.log("Background noise captured:", result);
   } catch (error) {

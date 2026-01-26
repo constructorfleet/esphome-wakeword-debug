@@ -7,14 +7,20 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Path as FastAPIPath
+from fastapi import (
+    FastAPI,
+    WebSocket,
+    WebSocketDisconnect,
+    HTTPException,
+    Path as FastAPIPath,
+)
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 
 from .config import settings
-from .audio_buffer import AudioBuffer, MultiAssistantAudioBuffer
+from .audio_buffer import MultiAssistantAudioBuffer
 from .wav_writer import WAVWriter
 from .mqtt_publisher import MQTTPublisher
 from .mqtt_subscriber import MQTTSubscriber
@@ -22,8 +28,7 @@ from . import clip_db
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -31,7 +36,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Wake Word Audio Ingest Service",
     description="Receives audio streams, buffers, and saves wake word clips",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # UI and clip storage paths
@@ -112,7 +117,9 @@ def _parse_datetime(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid datetime: {value}") from exc
+        raise HTTPException(
+            status_code=400, detail=f"Invalid datetime: {value}"
+        ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -173,21 +180,23 @@ async def handle_audio_data(assistant_id: str, audio_data: bytes) -> None:
     """Handle incoming audio data from MQTT."""
     buffer = get_audio_buffer()
     await buffer.append(assistant_id, audio_data)
-    logger.debug(f"Received {len(audio_data)} bytes of audio data for assistant {assistant_id}")
+    logger.debug(
+        f"Received {len(audio_data)} bytes of audio data for assistant {assistant_id}"
+    )
 
 
 async def handle_audio_info(assistant_id: str, audio_info: dict) -> None:
     """Handle audio info configuration from MQTT."""
     logger.info(f"Configuring audio for assistant {assistant_id}: {audio_info}")
-    
+
     try:
         buffer = get_audio_buffer()
-        
+
         # Extract audio parameters
         sample_rate = audio_info.get("sample_rate")
         bits_per_sample = audio_info.get("bits_per_sample")
         channels = audio_info.get("channels")
-        
+
         # Validate required fields
         if not all([sample_rate, bits_per_sample, channels]):
             logger.error(
@@ -195,15 +204,17 @@ async def handle_audio_info(assistant_id: str, audio_info: dict) -> None:
                 f"missing required fields (sample_rate, bits_per_sample, channels)"
             )
             return
-        
+
         # Set audio configuration for this assistant
-        await buffer.set_audio_config(assistant_id, sample_rate, bits_per_sample, channels)
-        
+        await buffer.set_audio_config(
+            assistant_id, sample_rate, bits_per_sample, channels
+        )
+
         logger.info(
             f"Audio configuration set for assistant {assistant_id}: "
             f"{sample_rate}Hz, {bits_per_sample}-bit, {channels} channel(s)"
         )
-        
+
     except Exception as e:
         logger.error(f"Error processing audio info for assistant {assistant_id}: {e}")
 
@@ -211,43 +222,47 @@ async def handle_audio_info(assistant_id: str, audio_info: dict) -> None:
 async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
     """Handle wake word event from MQTT."""
     logger.info(f"Wake word detected for assistant {assistant_id}: {metadata}")
-    
+
     # Check if this is a wake event
     if metadata.get("event") != "wake":
         return
-    
+
     try:
         buffer = get_audio_buffer()
         writer = get_wav_writer()
         mqtt = get_mqtt_publisher()
-        
+
         # Use default durations for wake event
         pre_duration = settings.PRE_WAKE_DURATION_SECONDS
         post_duration = settings.POST_WAKE_DURATION_SECONDS
-        
+
         # Wait for POST_WAKE_DURATION_SECONDS to capture audio after wake event
-        logger.info(f"Waiting {post_duration}s to capture post-wake audio for assistant {assistant_id}")
+        logger.info(
+            f"Waiting {post_duration}s to capture post-wake audio for assistant {assistant_id}"
+        )
         await asyncio.sleep(post_duration)
-        
+
         # Extract clip from buffer for this assistant
         # Use trigger_offset to indicate the wake event was post_duration seconds ago
         clip = await buffer.get_clip(
             assistant_id=assistant_id,
             pre_duration=pre_duration,
             post_duration=post_duration,
-            trigger_offset=post_duration
+            trigger_offset=post_duration,
         )
-        
+
         if clip is None:
-            logger.warning(f"Insufficient audio data in buffer for assistant {assistant_id}")
+            logger.warning(
+                f"Insufficient audio data in buffer for assistant {assistant_id}"
+            )
             return
-        
+
         # Get audio configuration for this assistant (MQTT config takes precedence over ENV)
         audio_config = buffer.get_audio_config(assistant_id)
         sample_rate = audio_config["sample_rate"]
         sample_width = audio_config["sample_width"]
         channels = audio_config["channels"]
-        
+
         # Create metadata
         timestamp = datetime.utcnow().isoformat()
         clip_metadata = {
@@ -258,16 +273,16 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
             "sample_rate": sample_rate,
             "samples": len(clip),
             "duration": len(clip) / (sample_rate * channels),
-            "wake_metadata": metadata
+            "wake_metadata": metadata,
         }
-        
+
         # Write WAV file with assistant-specific audio configuration
         wav_path = writer.write_clip(
             clip,
             metadata=clip_metadata,
             sample_rate=sample_rate,
             sample_width=sample_width,
-            channels=channels
+            channels=channels,
         )
 
         clip_db.insert_clip(
@@ -279,68 +294,75 @@ async def handle_wake_event(assistant_id: str, metadata: dict) -> None:
             sample_rate=sample_rate,
             label=clip_db.LABEL_UNKNOWN,
         )
-        
+
         # Publish MQTT event
         mqtt.publish_wake_event(wav_path, clip_metadata)
-        
-        logger.info(f"Wake event processed for assistant {assistant_id}: {wav_path}")
-        
-    except Exception as e:
-        logger.error(f"Error processing wake event from MQTT for assistant {assistant_id}: {e}")
 
+        logger.info(f"Wake event processed for assistant {assistant_id}: {wav_path}")
+
+    except Exception as e:
+        logger.error(
+            f"Error processing wake event from MQTT for assistant {assistant_id}: {e}"
+        )
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
     global main_event_loop
-    
+
     # Store reference to the main event loop
     main_event_loop = asyncio.get_running_loop()
-    
+
     logger.info("Starting Wake Word Audio Ingest Service...")
     logger.info(f"Server: {settings.HOST}:{settings.PORT}")
     logger.info(f"Sample Rate: {settings.SAMPLE_RATE} Hz")
     logger.info(f"Buffer Duration: {settings.BUFFER_DURATION_SECONDS}s")
     logger.info(f"Output Directory: {settings.OUTPUT_DIR}")
     logger.info(f"Clip DB Path: {CLIP_DB_PATH}")
-    
+
     # Initialize components
     get_audio_buffer()
     get_wav_writer()
     clip_db.init_db(CLIP_DB_PATH)
     _sync_clips_from_disk()
-    
+
     # Connect to MQTT broker (publisher)
     mqtt = get_mqtt_publisher()
     if mqtt.connect():
         logger.info("MQTT publisher connection established")
     else:
         logger.warning("Failed to connect MQTT publisher to broker")
-    
+
     # Connect to MQTT broker (subscriber)
     subscriber = get_mqtt_subscriber()
-    
+
     # Set up callbacks with thread-safe asyncio wrappers
     def audio_callback(assistant_id: str, data: bytes):
         """Thread-safe wrapper for async audio handler."""
         if main_event_loop and not main_event_loop.is_closed():
-            asyncio.run_coroutine_threadsafe(handle_audio_data(assistant_id, data), main_event_loop)
-    
+            asyncio.run_coroutine_threadsafe(
+                handle_audio_data(assistant_id, data), main_event_loop
+            )
+
     def audio_info_callback(assistant_id: str, audio_info: dict):
         """Thread-safe wrapper for async audio info handler."""
         if main_event_loop and not main_event_loop.is_closed():
-            asyncio.run_coroutine_threadsafe(handle_audio_info(assistant_id, audio_info), main_event_loop)
-    
+            asyncio.run_coroutine_threadsafe(
+                handle_audio_info(assistant_id, audio_info), main_event_loop
+            )
+
     def wake_callback(assistant_id: str, metadata: dict):
         """Thread-safe wrapper for async wake handler."""
         if main_event_loop and not main_event_loop.is_closed():
-            asyncio.run_coroutine_threadsafe(handle_wake_event(assistant_id, metadata), main_event_loop)
-    
+            asyncio.run_coroutine_threadsafe(
+                handle_wake_event(assistant_id, metadata), main_event_loop
+            )
+
     subscriber.set_audio_callback(audio_callback)
     subscriber.set_audio_info_callback(audio_info_callback)
     subscriber.set_wake_callback(wake_callback)
-    
+
     if subscriber.connect():
         logger.info("MQTT subscriber connection established")
     else:
@@ -351,10 +373,10 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown."""
     logger.info("Shutting down Wake Word Audio Ingest Service...")
-    
+
     mqtt = get_mqtt_publisher()
     mqtt.disconnect()
-    
+
     subscriber = get_mqtt_subscriber()
     subscriber.disconnect()
 
@@ -369,7 +391,7 @@ async def root():
         "status": "running",
         "buffer_duration": buffer.get_duration(),
         "active_connections": len(active_connections),
-        "active_assistants": buffer.get_assistant_ids()
+        "active_assistants": buffer.get_assistant_ids(),
     }
 
 
@@ -385,7 +407,7 @@ async def health():
         "mqtt_subscriber_connected": subscriber.connected,
         "buffer_samples": buffer.get_buffer_size(),
         "buffer_duration_seconds": buffer.get_duration(),
-        "active_assistants": buffer.get_assistant_ids()
+        "active_assistants": buffer.get_assistant_ids(),
     }
 
 
@@ -394,25 +416,23 @@ async def get_assistants():
     """Get list of active assistant IDs."""
     buffer = get_audio_buffer()
     assistant_ids = buffer.get_assistant_ids()
-    return {
-        "assistants": assistant_ids if assistant_ids else ["default"]
-    }
+    return {"assistants": assistant_ids if assistant_ids else ["default"]}
 
 
 @app.post("/wake_event")
 async def trigger_wake_event(
     assistant_id: str = "default",
     pre_duration: float = settings.PRE_WAKE_DURATION_SECONDS,
-    post_duration: float = settings.POST_WAKE_DURATION_SECONDS
+    post_duration: float = settings.POST_WAKE_DURATION_SECONDS,
 ):
     """
     Manually trigger a wake event to capture and save an audio clip.
-    
+
     Args:
         assistant_id: Assistant ID to capture audio from
         pre_duration: Seconds of audio before the event
         post_duration: Seconds of audio after the event
-    
+
     Returns:
         Information about the saved clip
     """
@@ -420,32 +440,34 @@ async def trigger_wake_event(
         buffer = get_audio_buffer()
         writer = get_wav_writer()
         mqtt = get_mqtt_publisher()
-        
+
         # Wait for POST_WAKE_DURATION_SECONDS to capture audio after wake event
-        logger.info(f"Waiting {post_duration}s to capture post-wake audio for assistant {assistant_id}")
+        logger.info(
+            f"Waiting {post_duration}s to capture post-wake audio for assistant {assistant_id}"
+        )
         await asyncio.sleep(post_duration)
-        
+
         # Extract clip from buffer for this assistant
         # Use trigger_offset to indicate the wake event was post_duration seconds ago
         clip = await buffer.get_clip(
             assistant_id=assistant_id,
             pre_duration=pre_duration,
             post_duration=post_duration,
-            trigger_offset=post_duration
+            trigger_offset=post_duration,
         )
-        
+
         if clip is None:
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient audio data in buffer for assistant {assistant_id}"
+                detail=f"Insufficient audio data in buffer for assistant {assistant_id}",
             )
-        
+
         # Get audio configuration for this assistant (MQTT config takes precedence over ENV)
         audio_config = buffer.get_audio_config(assistant_id)
         sample_rate = audio_config["sample_rate"]
         sample_width = audio_config["sample_width"]
         channels = audio_config["channels"]
-        
+
         # Create metadata
         timestamp = datetime.utcnow().isoformat()
         metadata = {
@@ -455,16 +477,16 @@ async def trigger_wake_event(
             "post_duration": post_duration,
             "sample_rate": sample_rate,
             "samples": len(clip),
-            "duration": len(clip) / (sample_rate * channels)
+            "duration": len(clip) / (sample_rate * channels),
         }
-        
+
         # Write WAV file with assistant-specific audio configuration
         wav_path = writer.write_clip(
             clip,
             metadata=metadata,
             sample_rate=sample_rate,
             sample_width=sample_width,
-            channels=channels
+            channels=channels,
         )
 
         clip_db.insert_clip(
@@ -476,19 +498,19 @@ async def trigger_wake_event(
             sample_rate=sample_rate,
             label=clip_db.LABEL_UNKNOWN,
         )
-        
+
         # Publish MQTT event
         mqtt_published = mqtt.publish_wake_event(wav_path, metadata)
-        
+
         logger.info(f"Wake event processed for assistant {assistant_id}: {wav_path}")
-        
+
         return {
             "success": True,
             "wav_file": wav_path,
             "metadata": metadata,
-            "mqtt_published": mqtt_published
+            "mqtt_published": mqtt_published,
         }
-        
+
     except HTTPException:
         raise  # Re-raise HTTPException so it's not caught by the generic handler
     except Exception as e:
@@ -500,54 +522,56 @@ async def trigger_wake_event(
 async def capture_background_noise(payload: CaptureBackgroundNoiseRequest):
     """
     Capture the last N seconds of audio and label as background noise.
-    
+
     Args:
         payload: Request containing seconds and assistant_id
-    
+
     Returns:
         Information about the saved clip
     """
     try:
         seconds = payload.seconds
         assistant_id = payload.assistant_id
-        
+
         buffer = get_audio_buffer()
         writer = get_wav_writer()
-        
+
         # Validate seconds parameter
         if seconds <= 0:
             raise HTTPException(
-                status_code=400,
-                detail="Seconds must be greater than 0"
+                status_code=400, detail="Seconds must be greater than 0"
             )
-        
+
         if seconds > settings.BUFFER_DURATION_SECONDS:
             raise HTTPException(
                 status_code=400,
-                detail=f"Seconds cannot exceed buffer duration ({settings.BUFFER_DURATION_SECONDS}s)"
+                detail=(
+                    f"Seconds cannot exceed buffer duration "
+                    f"({settings.BUFFER_DURATION_SECONDS}s)"
+                ),
             )
-        
+
         # Extract clip from buffer - capture last N seconds
         # We use pre_duration=seconds and post_duration=0 to get the last N seconds
         clip = await buffer.get_clip(
             assistant_id=assistant_id,
             pre_duration=seconds,
             post_duration=0,
-            trigger_offset=0
+            trigger_offset=0,
         )
-        
+
         if clip is None:
             raise HTTPException(
                 status_code=400,
-                detail=f"Insufficient audio data in buffer for assistant {assistant_id}"
+                detail=f"Insufficient audio data in buffer for assistant {assistant_id}",
             )
-        
+
         # Get audio configuration for this assistant
         audio_config = buffer.get_audio_config(assistant_id)
         sample_rate = audio_config["sample_rate"]
         sample_width = audio_config["sample_width"]
         channels = audio_config["channels"]
-        
+
         # Create metadata
         timestamp = datetime.utcnow().isoformat()
         metadata = {
@@ -558,18 +582,18 @@ async def capture_background_noise(payload: CaptureBackgroundNoiseRequest):
             "sample_rate": sample_rate,
             "samples": len(clip),
             "duration": len(clip) / (sample_rate * channels),
-            "label": clip_db.LABEL_BACKGROUND_NOISE
+            "label": clip_db.LABEL_BACKGROUND_NOISE,
         }
-        
+
         # Write WAV file with assistant-specific audio configuration
         wav_path = writer.write_clip(
             clip,
             metadata=metadata,
             sample_rate=sample_rate,
             sample_width=sample_width,
-            channels=channels
+            channels=channels,
         )
-        
+
         # Insert clip into database with Background Noise label
         clip_db.insert_clip(
             CLIP_DB_PATH,
@@ -580,16 +604,18 @@ async def capture_background_noise(payload: CaptureBackgroundNoiseRequest):
             sample_rate=sample_rate,
             label=clip_db.LABEL_BACKGROUND_NOISE,
         )
-        
-        logger.info(f"Background noise clip captured for assistant {assistant_id}: {wav_path}")
-        
+
+        logger.info(
+            f"Background noise clip captured for assistant {assistant_id}: {wav_path}"
+        )
+
         return {
             "success": True,
             "wav_file": wav_path,
             "metadata": metadata,
-            "label": clip_db.LABEL_BACKGROUND_NOISE
+            "label": clip_db.LABEL_BACKGROUND_NOISE,
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -601,14 +627,17 @@ async def capture_background_noise(payload: CaptureBackgroundNoiseRequest):
 async def clear_buffer(assistant_id: Optional[str] = None):
     """
     Clear the audio buffer.
-    
+
     Args:
         assistant_id: Specific assistant to clear, or None to clear all
     """
     buffer = get_audio_buffer()
     await buffer.clear(assistant_id)
     if assistant_id:
-        return {"success": True, "message": f"Buffer cleared for assistant {assistant_id}"}
+        return {
+            "success": True,
+            "message": f"Buffer cleared for assistant {assistant_id}",
+        }
     return {"success": True, "message": "All buffers cleared"}
 
 
@@ -616,27 +645,27 @@ async def clear_buffer(assistant_id: Optional[str] = None):
 async def websocket_audio_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for receiving raw PCM audio data.
-    
+
     Expected format: Raw PCM 16-bit signed integers, little-endian
     """
     await websocket.accept()
     active_connections.append(websocket)
-    
+
     buffer = get_audio_buffer()
     client_info = websocket.client
     logger.info(f"WebSocket client connected: {client_info}")
-    
+
     try:
         while True:
             # Receive raw audio data
             data = await websocket.receive_bytes()
-            
+
             # Append to buffer
             await buffer.append(data)
-            
+
             # Optional: Send acknowledgment back to client
             # await websocket.send_json({"status": "ok", "bytes_received": len(data)})
-            
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket client disconnected: {client_info}")
     except Exception as e:
@@ -650,10 +679,10 @@ async def websocket_audio_endpoint(websocket: WebSocket):
 async def cleanup_old_files(max_age_days: int = 7):
     """
     Cleanup old WAV files.
-    
+
     Args:
         max_age_days: Maximum age of files to keep (default: 7 days)
-    
+
     Returns:
         Number of files deleted
     """
@@ -662,7 +691,7 @@ async def cleanup_old_files(max_age_days: int = 7):
     return {
         "success": True,
         "deleted_count": deleted_count,
-        "max_age_days": max_age_days
+        "max_age_days": max_age_days,
     }
 
 
@@ -681,11 +710,11 @@ async def list_clips(
     end_iso = end_dt.isoformat().replace("+00:00", "Z") if end_dt else None
 
     rows = clip_db.list_clips(
-        CLIP_DB_PATH, 
-        start=start_iso, 
-        end=end_iso, 
+        CLIP_DB_PATH,
+        start=start_iso,
+        end=end_iso,
         label=label,
-        include_deleted=include_deleted
+        include_deleted=include_deleted,
     )
     clips = []
     for row in rows:
@@ -735,7 +764,9 @@ async def label_clip(
         wav_path = _clip_path_from_filename(row["filename"])
         metadata = _clip_metadata(wav_path)
         metadata["label"] = label
-        metadata["reviewed_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        metadata["reviewed_at"] = (
+            datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        )
         metadata_path = wav_path.with_suffix(".json")
         try:
             with open(metadata_path, "w") as metadata_file:
@@ -762,7 +793,9 @@ async def delete_clip(clip_id: int = FastAPIPath(..., ge=1)):
         wav_path = _clip_path_from_filename(row["filename"])
         metadata = _clip_metadata(wav_path)
         metadata["deleted"] = True
-        metadata["deleted_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        metadata["deleted_at"] = (
+            datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        )
         metadata_path = wav_path.with_suffix(".json")
         try:
             with open(metadata_path, "w") as metadata_file:
@@ -789,7 +822,9 @@ async def undelete_clip(clip_id: int = FastAPIPath(..., ge=1)):
         wav_path = _clip_path_from_filename(row["filename"])
         metadata = _clip_metadata(wav_path)
         metadata["deleted"] = False
-        metadata["undeleted_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        metadata["undeleted_at"] = (
+            datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        )
         metadata_path = wav_path.with_suffix(".json")
         try:
             with open(metadata_path, "w") as metadata_file:
@@ -824,11 +859,13 @@ async def download_clips(
         start=start_iso,
         end=end_iso,
         label=label,
-        include_deleted=include_deleted
+        include_deleted=include_deleted,
     )
 
     if not rows:
-        raise HTTPException(status_code=404, detail="No clips found matching the criteria")
+        raise HTTPException(
+            status_code=404, detail="No clips found matching the criteria"
+        )
 
     # Create a temporary zip file
     temp_dir = Path(tempfile.mkdtemp())
@@ -838,22 +875,22 @@ async def download_clips(
     zip_path = temp_dir / zip_filename
 
     try:
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             # Organize clips by label
             for row in rows:
                 clip_label = row["label"] or "Unknown"
                 label_dir = clip_label.replace(" ", "_")
-                
+
                 # Get the WAV file
                 wav_path = _clip_path_from_filename(row["filename"])
                 if not wav_path.exists():
                     logger.warning(f"WAV file not found: {wav_path}")
                     continue
-                
+
                 # Add WAV file to zip
                 arcname = f"{label_dir}/{wav_path.name}"
                 zipf.write(wav_path, arcname)
-                
+
                 # Add metadata JSON if it exists
                 metadata_path = wav_path.with_suffix(".json")
                 if metadata_path.exists():
@@ -865,22 +902,23 @@ async def download_clips(
             path=str(zip_path),
             media_type="application/zip",
             filename=zip_filename,
-            headers={
-                "Content-Disposition": f"attachment; filename={zip_filename}"
-            },
-            background=lambda: _cleanup_temp_dir(temp_dir)
+            headers={"Content-Disposition": f"attachment; filename={zip_filename}"},
+            background=lambda: _cleanup_temp_dir(temp_dir),
         )
     except Exception as e:
         # Clean up on error
         _cleanup_temp_dir(temp_dir)
         logger.error(f"Error creating zip file: {e}")
-        raise HTTPException(status_code=500, detail="Error creating zip file. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="Error creating zip file. Please try again."
+        )
 
 
 def _cleanup_temp_dir(temp_dir: Path) -> None:
     """Clean up temporary directory and its contents."""
     try:
         import shutil
+
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
     except Exception as e:
@@ -894,7 +932,7 @@ def main():
         host=settings.HOST,
         port=settings.PORT,
         reload=False,
-        log_level="info"
+        log_level="info",
     )
 
 
