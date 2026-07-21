@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import (
     FastAPI,
+    Request,
     WebSocket,
     WebSocketDisconnect,
     HTTPException,
@@ -24,6 +25,7 @@ from .audio_buffer import MultiAssistantAudioBuffer
 from .wav_writer import WAVWriter
 from .mqtt_publisher import MQTTPublisher
 from .mqtt_subscriber import MQTTSubscriber
+from .udp_receiver import UDPAudioReceiver
 from . import clip_db
 
 # Configure logging
@@ -62,6 +64,11 @@ audio_buffer: Optional[MultiAssistantAudioBuffer] = None
 wav_writer: Optional[WAVWriter] = None
 mqtt_publisher: Optional[MQTTPublisher] = None
 mqtt_subscriber: Optional[MQTTSubscriber] = None
+udp_receiver: Optional[UDPAudioReceiver] = None
+
+# Assistants whose buffer has already been configured for the UDP stream format,
+# so we only set the audio config once per assistant instead of on every datagram.
+udp_configured_assistants: set[str] = set()
 
 # Track active websocket connections
 active_connections: list[WebSocket] = []
@@ -111,6 +118,14 @@ def get_mqtt_subscriber() -> MQTTSubscriber:
     if mqtt_subscriber is None:
         mqtt_subscriber = MQTTSubscriber()
     return mqtt_subscriber
+
+
+def get_udp_receiver() -> UDPAudioReceiver:
+    """Get or create UDP audio receiver instance."""
+    global udp_receiver
+    if udp_receiver is None:
+        udp_receiver = UDPAudioReceiver()
+    return udp_receiver
 
 
 def _parse_datetime(value: str) -> datetime:
@@ -182,6 +197,35 @@ async def handle_audio_data(assistant_id: str, audio_data: bytes) -> None:
     await buffer.append(assistant_id, audio_data)
     logger.debug(
         f"Received {len(audio_data)} bytes of audio data for assistant {assistant_id}"
+    )
+
+
+async def handle_udp_audio_data(assistant_id: str, audio_data: bytes) -> None:
+    """Handle incoming raw PCM audio from the UDP stream.
+
+    Unlike MQTT senders, the UDP `wake_audio_stream` component does not publish an
+    audio_info message, so we configure the assistant's buffer with the UDP stream
+    format (int16 / mono / 16 kHz) the first time we hear from it.
+    """
+    buffer = get_audio_buffer()
+    if assistant_id not in udp_configured_assistants:
+        # Mark configured before awaiting so datagrams that arrive during
+        # set_audio_config don't each trigger a buffer recreation.
+        udp_configured_assistants.add(assistant_id)
+        await buffer.set_audio_config(
+            assistant_id,
+            sample_rate=settings.UDP_SAMPLE_RATE,
+            bits_per_sample=settings.UDP_SAMPLE_WIDTH * 8,
+            channels=settings.UDP_CHANNELS,
+        )
+        logger.info(
+            f"Configured UDP audio buffer for assistant {assistant_id}: "
+            f"{settings.UDP_SAMPLE_RATE}Hz, {settings.UDP_SAMPLE_WIDTH * 8}-bit, "
+            f"{settings.UDP_CHANNELS} channel(s)"
+        )
+    await buffer.append(assistant_id, audio_data)
+    logger.debug(
+        f"Received {len(audio_data)} UDP bytes of audio data for assistant {assistant_id}"
     )
 
 
@@ -368,6 +412,26 @@ async def startup_event():
     else:
         logger.warning("Failed to connect MQTT subscriber to broker")
 
+    # Start UDP audio receiver (raw PCM stream from satellite1 wake_audio_stream)
+    if settings.UDP_ENABLED:
+        def udp_audio_callback(assistant_id: str, data: bytes):
+            """Schedule the async UDP audio handler on the running loop."""
+            if main_event_loop and not main_event_loop.is_closed():
+                main_event_loop.create_task(
+                    handle_udp_audio_data(assistant_id, data)
+                )
+
+        receiver = get_udp_receiver()
+        receiver.set_audio_callback(udp_audio_callback)
+        if await receiver.start():
+            logger.info(
+                f"UDP audio receiver listening on {settings.UDP_HOST}:{settings.UDP_PORT}"
+            )
+        else:
+            logger.warning("Failed to start UDP audio receiver")
+    else:
+        logger.info("UDP audio receiver disabled")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -379,6 +443,9 @@ async def shutdown_event():
 
     subscriber = get_mqtt_subscriber()
     subscriber.disconnect()
+
+    if udp_receiver is not None:
+        udp_receiver.stop()
 
 
 @app.get("/")
@@ -405,6 +472,7 @@ async def health():
         "status": "healthy",
         "mqtt_publisher_connected": mqtt.connected,
         "mqtt_subscriber_connected": subscriber.connected,
+        "udp_receiver_running": udp_receiver.running if udp_receiver else False,
         "buffer_samples": buffer.get_buffer_size(),
         "buffer_duration_seconds": buffer.get_duration(),
         "active_assistants": buffer.get_assistant_ids(),
@@ -421,21 +489,29 @@ async def get_assistants():
 
 @app.post("/wake_event")
 async def trigger_wake_event(
-    assistant_id: str = "default",
+    request: Request,
+    assistant_id: Optional[str] = None,
     pre_duration: float = settings.PRE_WAKE_DURATION_SECONDS,
     post_duration: float = settings.POST_WAKE_DURATION_SECONDS,
 ):
     """
-    Manually trigger a wake event to capture and save an audio clip.
+    Trigger a wake event to capture and save an audio clip.
+
+    Designed so a UDP-streaming device can signal a detection with a plain HTTP POST
+    (no MQTT broker required). When `assistant_id` is omitted, the caller's IP address
+    is used, which matches how UDP audio is keyed by default — so a device hitting this
+    endpoint captures a clip from its own audio buffer automatically.
 
     Args:
-        assistant_id: Assistant ID to capture audio from
+        assistant_id: Assistant ID to capture audio from (defaults to the caller's IP)
         pre_duration: Seconds of audio before the event
         post_duration: Seconds of audio after the event
 
     Returns:
         Information about the saved clip
     """
+    if assistant_id is None:
+        assistant_id = request.client.host if request.client else "default"
     try:
         buffer = get_audio_buffer()
         writer = get_wav_writer()

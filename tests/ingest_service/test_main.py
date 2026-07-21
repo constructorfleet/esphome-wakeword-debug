@@ -29,6 +29,8 @@ def reset_globals():
     main_module.wav_writer = None
     main_module.mqtt_publisher = None
     main_module.mqtt_subscriber = None
+    main_module.udp_receiver = None
+    main_module.udp_configured_assistants = set()
     yield
 
 
@@ -174,6 +176,66 @@ class TestMainAPI:
         call_kwargs = mock_buffer_instance.get_clip.call_args[1]
         assert call_kwargs["pre_duration"] == 3.0
         assert call_kwargs["post_duration"] == 4.0
+
+    @patch("ingest_service.app.main.get_mqtt_publisher")
+    @patch("ingest_service.app.main.get_wav_writer")
+    @patch("ingest_service.app.main.get_audio_buffer")
+    def test_trigger_wake_event_defaults_assistant_to_client_ip(
+        self, mock_get_buffer, mock_get_wav, mock_get_mqtt
+    ):
+        """When no assistant_id is given, the caller's IP is used (matches UDP keying)."""
+        mock_clip = np.array([i for i in range(1000)], dtype=np.int16)
+        mock_buffer_instance = Mock()
+        mock_buffer_instance.get_clip = AsyncMock(return_value=mock_clip)
+        mock_buffer_instance.get_audio_config = Mock(
+            return_value={"sample_rate": 16000, "sample_width": 2, "channels": 1}
+        )
+        mock_get_buffer.return_value = mock_buffer_instance
+
+        mock_wav_instance = Mock()
+        mock_wav_instance.write_clip.return_value = "/path/to/file.wav"
+        mock_get_wav.return_value = mock_wav_instance
+
+        mock_mqtt_instance = Mock()
+        mock_mqtt_instance.publish_wake_event.return_value = True
+        mock_get_mqtt.return_value = mock_mqtt_instance
+
+        # TestClient reports the client host as "testclient".
+        with TestClient(app) as client:
+            response = client.post("/wake_event")
+
+        assert response.status_code == 200
+        assert response.json()["metadata"]["assistant_id"] == "testclient"
+        assert mock_buffer_instance.get_clip.call_args[1]["assistant_id"] == "testclient"
+
+    @patch("ingest_service.app.main.get_mqtt_publisher")
+    @patch("ingest_service.app.main.get_wav_writer")
+    @patch("ingest_service.app.main.get_audio_buffer")
+    def test_trigger_wake_event_explicit_assistant_id(
+        self, mock_get_buffer, mock_get_wav, mock_get_mqtt
+    ):
+        """An explicit assistant_id query param overrides the caller IP."""
+        mock_clip = np.array([i for i in range(1000)], dtype=np.int16)
+        mock_buffer_instance = Mock()
+        mock_buffer_instance.get_clip = AsyncMock(return_value=mock_clip)
+        mock_buffer_instance.get_audio_config = Mock(
+            return_value={"sample_rate": 16000, "sample_width": 2, "channels": 1}
+        )
+        mock_get_buffer.return_value = mock_buffer_instance
+
+        mock_wav_instance = Mock()
+        mock_wav_instance.write_clip.return_value = "/path/to/file.wav"
+        mock_get_wav.return_value = mock_wav_instance
+
+        mock_mqtt_instance = Mock()
+        mock_mqtt_instance.publish_wake_event.return_value = True
+        mock_get_mqtt.return_value = mock_mqtt_instance
+
+        with TestClient(app) as client:
+            response = client.post("/wake_event?assistant_id=sat1")
+
+        assert response.status_code == 200
+        assert mock_buffer_instance.get_clip.call_args[1]["assistant_id"] == "sat1"
 
     @patch("ingest_service.app.main.get_audio_buffer")
     @patch("ingest_service.app.main.get_wav_writer")

@@ -1,35 +1,39 @@
 # ESPHome Wake Word Debug Pipeline
 
 A comprehensive audio capture and processing pipeline for wake word debugging, consisting of:
-- **ESPHome Configuration**: Captures I2S microphone audio and streams base64-encoded PCM chunks over MQTT
+- **ESPHome Configuration**: Captures wake-word audio and streams it to the ingest service. Two transports are supported:
+  - **UDP** (recommended): the satellite1 `wake_audio_stream` component streams the exact PCM microWakeWord processes (int16 / mono / 16 kHz) as raw datagrams — low overhead, no broker required.
+  - **MQTT**: base64-encoded PCM chunks published to a topic (legacy / broker-based setups).
 - **Python FastAPI Ingest Service**: Buffers audio, extracts clips around wake events, writes WAV files, and publishes MQTT events
 - **Home Assistant Integration**: React to wake word events via MQTT
 
 ## Architecture
 
 ```
-┌─────────────────┐           MQTT             ┌──────────────────┐
-│  ESP32 Device   │ ───────(Base64 PCM)──────> │  MQTT Broker     │
-│  + I2S Mic      │                             │  (Mosquitto)     │
-│  + ESPHome      │                             │                  │
-│  + Micro Wake   │                             └────────┬─────────┘
-│    Word         │                                      │
-└─────────────────┘                                      │ MQTT
-                                                         ▼
-                                                ┌──────────────────┐
-                                                │ Ingest Service   │
-                                                │  (FastAPI)       │
-                                                │                  │
-                                                │ • Audio Buffer   │
-                                                │ • WAV Writer     │
-                                                │ • MQTT Subscriber│
-                                                └────────┬─────────┘
-                                                         │ MQTT
-                                                         ▼
-                                                ┌──────────────────┐
-                                                │ Home Assistant   │
-                                                └──────────────────┘
+                     UDP (raw int16 PCM audio)
+┌─────────────────┐  + HTTP POST /wake_event   ┌──────────────────┐
+│  satellite1     │ ─────────────────────────> │ Ingest Service   │
+│  + wake_audio_  │       (no broker)           │  (FastAPI)       │
+│    stream       │                             │                  │
+│  + microWakeWord│   ──────── or ────────      │ • UDP Receiver   │
+│                 │   MQTT (base64 PCM audio    │ • MQTT Subscriber│
+│                 │        + wake events)       │ • Audio Buffer   │
+└─────────────────┘ ──────────────────┐         │ • WAV Writer     │
+                                       ▼         └────────┬─────────┘
+                              ┌──────────────┐            │
+                              │ MQTT Broker  │<───────────┘
+                              │ (Mosquitto)  │   wake events (MQTT)
+                              └──────┬───────┘            │
+                                     └───────> Home Assistant
 ```
+
+**Note:** Wake-word events can arrive two ways:
+- **MQTT** (`assist/debug/+/events`) — used by the MQTT audio path.
+- **HTTP** (`POST /wake_event`) — used by the UDP path, so a UDP-only device needs **no MQTT broker
+  at all**. The satellite1 firmware posts to this endpoint from `on_wake_word_detected`; when it
+  omits `assistant_id`, the service keys the clip by the caller's IP, which matches how UDP audio is
+  buffered. You can also hit the endpoint manually, or use the "capture background noise" button in
+  the review UI.
 
 ## Features
 
@@ -42,6 +46,7 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 - **Multi-assistant support**: Publish to topics with assistant ID in the middle (e.g., `assist/debug/assistant1/pcm` matches pattern `assist/debug/+/pcm`)
 
 ### Ingest Service
+- **UDP receiver** for raw PCM audio from the satellite1 `wake_audio_stream` component (int16 / mono / 16 kHz)
 - MQTT subscriber for base64-encoded audio chunks from ESPHome
 - **Multi-assistant audio buffering**: Separate audio buffers for each assistant ID
 - **Per-assistant audio configuration**: Dynamic audio parameters via MQTT retained messages
@@ -172,6 +177,45 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
 ```
 
+#### Alternative: UDP audio from the satellite1 `wake_audio_stream` component
+
+If you build the satellite1 firmware with the `wake_audio_stream` component (see the
+`satellite1-esphome` repo), audio is streamed over UDP instead of MQTT. That component taps
+microWakeWord's `on_audio_data` trigger, so it sends the exact audio the wake-word models
+process (int16 / mono / 16 kHz) — including audio where no wake word fired, which is what you
+want for false-negative training data.
+
+On the satellite1 side, point the stream at this service and toggle capture with the
+"Capture wake-word audio" switch:
+
+```yaml
+wake_audio_stream:
+  id: wake_audio_streamer
+  ip_address: 192.168.1.100   # host running this ingest service
+  port: 6056                  # must match UDP_PORT
+  buffer_duration: 500ms
+```
+
+The ingest service listens on `UDP_PORT` (default `6056`) with no further config. Each device is
+tracked as a separate assistant, keyed by its sender IP (override with `UDP_ASSISTANT_ID`).
+
+The satellite1 firmware also posts to `POST /wake_event` from `on_wake_word_detected` (gated on the
+same capture switch), so **no MQTT broker is needed** for the UDP path — the device signals its own
+detections over HTTP, and the service keys the clip by the caller's IP to match the buffered audio.
+The firmware wiring looks like this (already included in the satellite1 `voice_assistant` package):
+
+```yaml
+micro_wake_word:
+  on_wake_word_detected:
+    - if:
+        condition:
+          switch.is_on: wake_audio_capture
+        then:
+          - http_request.post:
+              url: !lambda 'return "http://192.168.1.100:8000/wake_event?wake_word=" + wake_word;'
+              capture_response: false
+```
+
 ### 3. Flash ESP32 Device
 
 ```bash
@@ -213,6 +257,15 @@ Copy `.env.example` to `.env` and customize:
 SAMPLE_RATE=48000          # Sample rate in Hz (48kHz to match example-config.yaml)
 SAMPLE_WIDTH=4             # Bytes per sample (4=32bit to match example-config.yaml)
 CHANNELS=1                 # Number of audio channels
+
+# UDP audio ingest (satellite1 wake_audio_stream component)
+UDP_ENABLED=true          # Listen for raw PCM over UDP
+UDP_HOST=0.0.0.0          # Bind address
+UDP_PORT=6056             # Must match the component's `port:`
+UDP_SAMPLE_RATE=16000     # microWakeWord audio: 16 kHz
+UDP_SAMPLE_WIDTH=2        # 2 bytes (16-bit)
+UDP_CHANNELS=1            # Mono
+UDP_ASSISTANT_ID=         # Fixed assistant ID; empty = use sender IP
 
 # Buffer settings
 BUFFER_DURATION_SECONDS=60.0      # Total buffer size

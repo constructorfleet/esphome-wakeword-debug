@@ -22,6 +22,19 @@ class Settings:
     OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "/app/audio_clips")
     CLIP_DB_PATH: str = os.getenv("CLIP_DB_PATH", os.path.join(OUTPUT_DIR, "clips.db"))
     
+    # UDP audio ingest settings
+    # The satellite1 `wake_audio_stream` component streams raw PCM over UDP. It sends what
+    # microWakeWord processes: int16 (2-byte) samples, mono, 16 kHz, little-endian, unframed.
+    UDP_ENABLED: bool = os.getenv("UDP_ENABLED", "true").lower() in ("1", "true", "yes")
+    UDP_HOST: str = os.getenv("UDP_HOST", "0.0.0.0")
+    UDP_PORT: int = int(os.getenv("UDP_PORT", "6056"))
+    UDP_SAMPLE_RATE: int = int(os.getenv("UDP_SAMPLE_RATE", "16000"))
+    UDP_SAMPLE_WIDTH: int = int(os.getenv("UDP_SAMPLE_WIDTH", "2"))  # 2 bytes = 16 bits
+    UDP_CHANNELS: int = int(os.getenv("UDP_CHANNELS", "1"))
+    # If set, all UDP audio is attributed to this assistant ID. If empty, the sender's IP
+    # address is used so multiple devices are tracked as separate assistants.
+    UDP_ASSISTANT_ID: str = os.getenv("UDP_ASSISTANT_ID", "")
+
     # MQTT settings
     MQTT_BROKER: str = os.getenv("MQTT_BROKER", "localhost")
     MQTT_PORT: int = int(os.getenv("MQTT_PORT", "1883"))

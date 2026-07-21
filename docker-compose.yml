@@ -24,12 +24,20 @@ services:
     container_name: wakeword-ingest
     ports:
       - "8000:8000"
+      - "6056:6056/udp"
     environment:
       - HOST=0.0.0.0
       - PORT=8000
       - SAMPLE_RATE=48000
       - SAMPLE_WIDTH=4
       - CHANNELS=1
+      # UDP audio ingest (satellite1 wake_audio_stream). int16 / mono / 16 kHz.
+      - UDP_ENABLED=true
+      - UDP_HOST=0.0.0.0
+      - UDP_PORT=6056
+      - UDP_SAMPLE_RATE=16000
+      - UDP_SAMPLE_WIDTH=2
+      - UDP_CHANNELS=1
       - BUFFER_DURATION_SECONDS=60.0
       - PRE_WAKE_DURATION_SECONDS=2.0
       - POST_WAKE_DURATION_SECONDS=3.0
