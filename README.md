@@ -46,7 +46,7 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 - **Multi-assistant support**: Publish to topics with assistant ID in the middle (e.g., `assist/debug/assistant1/pcm` matches pattern `assist/debug/+/pcm`)
 
 ### Ingest Service
-- **UDP receiver** for raw PCM audio from the satellite1 `wake_audio_stream` component (int16 / mono / 16 kHz)
+- **UDP receiver** for self-describing PCM audio from the satellite1 `wake_audio_stream` component
 - MQTT subscriber for base64-encoded audio chunks from ESPHome
 - **Multi-assistant audio buffering**: Separate audio buffers for each assistant ID
 - **Per-assistant audio configuration**: Dynamic audio parameters via MQTT retained messages
@@ -198,11 +198,14 @@ wake_audio_stream:
 
 The ingest service listens on `UDP_PORT` (default `6056`) with no further config. It accepts both:
 
-- **Framed UDP packets (recommended):** `WWD1`, one byte containing the assistant-ID length,
-  the ASCII assistant ID, and the raw PCM payload. This preserves identity through Traefik and
-  other UDP proxies. IDs may contain letters, numbers, `_`, `.`, and `-`, must begin with a letter
-  or number, and are limited to 64 bytes. The current satellite1 `wake_audio_stream` component
-  automatically uses the ESPHome node name.
+- **Framed UDP packets (recommended):** `WWD2`, followed by a binary header containing assistant-ID
+  length, channel count, bits per sample, encoding, sample rate, packet sequence, and payload length;
+  then the ASCII assistant ID and PCM payload. This preserves identity and format through Traefik and
+  other UDP proxies. Multi-byte fields use network byte order; encoding `1` means signed little-endian
+  PCM. IDs may contain letters, numbers, `_`, `.`, and `-`, must begin with a letter or number, and are
+  limited to 64 bytes. The satellite1 component automatically uses the ESPHome node name.
+- **Legacy `WWD1` packets:** assistant-ID framing without format metadata remains accepted and uses
+  the configured UDP format defaults.
 - **Legacy raw PCM packets:** the sender IP is used as the assistant ID. This is suitable only when
   devices connect directly and have distinct visible IP addresses.
 
@@ -271,9 +274,9 @@ CHANNELS=1                 # Number of audio channels
 UDP_ENABLED=true          # Listen for raw PCM over UDP
 UDP_HOST=0.0.0.0          # Bind address
 UDP_PORT=6056             # Must match the component's `port:`
-UDP_SAMPLE_RATE=16000     # microWakeWord audio: 16 kHz
-UDP_SAMPLE_WIDTH=2        # 2 bytes (16-bit)
-UDP_CHANNELS=1            # Mono
+UDP_SAMPLE_RATE=16000     # Fallback for legacy WWD1/raw packets
+UDP_SAMPLE_WIDTH=2        # Fallback bytes per sample
+UDP_CHANNELS=1            # Fallback channel count
 UDP_ASSISTANT_ID=         # Fixed override; empty = framed packet ID or sender IP
 
 # Buffer settings

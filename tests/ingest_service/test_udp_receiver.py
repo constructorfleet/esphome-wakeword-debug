@@ -9,7 +9,11 @@ import numpy as np
 import pytest
 from unittest.mock import patch
 
-from ingest_service.app.udp_receiver import UDPAudioReceiver, encode_udp_audio_packet
+from ingest_service.app.udp_receiver import (
+    UDPAudioReceiver,
+    UDP_AUDIO_ENCODING_PCM_SIGNED_LE,
+    encode_udp_audio_packet,
+)
 
 
 def _find_free_udp_port() -> int:
@@ -36,7 +40,9 @@ class TestUDPAudioReceiver:
         received = []
         port = _find_free_udp_port()
         rx = UDPAudioReceiver(host="127.0.0.1", port=port, assistant_id="")
-        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        rx.set_audio_callback(
+            lambda aid, data, metadata: received.append((aid, data, metadata))
+        )
         assert await rx.start() is True
 
         try:
@@ -49,16 +55,19 @@ class TestUDPAudioReceiver:
             sock.close()
 
         assert len(received) == 1
-        assistant_id, data = received[0]
+        assistant_id, data, metadata = received[0]
         assert assistant_id == "127.0.0.1"
         assert data == payload
+        assert metadata is None
 
     async def test_fixed_assistant_id(self):
         """A configured assistant ID overrides the sender IP."""
         received = []
         port = _find_free_udp_port()
         rx = UDPAudioReceiver(host="127.0.0.1", port=port, assistant_id="sat1")
-        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        rx.set_audio_callback(
+            lambda aid, data, metadata: received.append((aid, data, metadata))
+        )
         assert await rx.start() is True
 
         try:
@@ -77,13 +86,15 @@ class TestUDPAudioReceiver:
         received = []
         port = _find_free_udp_port()
         rx = UDPAudioReceiver(host="127.0.0.1", port=port, assistant_id="sat1")
-        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        rx.set_audio_callback(
+            lambda aid, data, metadata: received.append((aid, data, metadata))
+        )
         assert await rx.start() is True
 
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.sendto(
-                encode_udp_audio_packet("kitchen", b"\x00\x01"),
+                encode_udp_audio_packet("kitchen", b"\x00\x01", sequence=7),
                 ("127.0.0.1", port),
             )
             await asyncio.sleep(0.2)
@@ -91,21 +102,30 @@ class TestUDPAudioReceiver:
             rx.stop()
             sock.close()
 
-        assert received == [("sat1", b"\x00\x01")]
+        assert received[0][:2] == ("sat1", b"\x00\x01")
 
     async def test_framed_datagram_uses_embedded_assistant_id(self):
         """A framed packet keeps assistant identity through a UDP proxy."""
         received = []
         port = _find_free_udp_port()
         rx = UDPAudioReceiver(host="127.0.0.1", port=port)
-        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        rx.set_audio_callback(
+            lambda aid, data, metadata: received.append((aid, data, metadata))
+        )
         assert await rx.start() is True
 
         try:
             pcm = np.arange(128, dtype="<i2").tobytes()
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.sendto(
-                encode_udp_audio_packet("kitchen", pcm),
+                encode_udp_audio_packet(
+                    "kitchen",
+                    pcm,
+                    sample_rate=48000,
+                    bits_per_sample=32,
+                    channels=2,
+                    sequence=42,
+                ),
                 ("127.0.0.1", port),
             )
             await asyncio.sleep(0.2)
@@ -113,14 +133,61 @@ class TestUDPAudioReceiver:
             rx.stop()
             sock.close()
 
-        assert received == [("kitchen", pcm)]
+        assert received[0][:2] == ("kitchen", pcm)
+        metadata = received[0][2]
+        assert metadata.sample_rate == 48000
+        assert metadata.bits_per_sample == 32
+        assert metadata.channels == 2
+        assert metadata.encoding == UDP_AUDIO_ENCODING_PCM_SIGNED_LE
+        assert metadata.sequence == 42
+
+    async def test_rejects_framed_datagram_with_wrong_payload_length(self):
+        received = []
+        port = _find_free_udp_port()
+        rx = UDPAudioReceiver(host="127.0.0.1", port=port)
+        rx.set_audio_callback(
+            lambda aid, data, metadata: received.append((aid, data, metadata))
+        )
+        assert await rx.start() is True
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            packet = encode_udp_audio_packet("kitchen", b"\x00\x01", sequence=1)
+            sock.sendto(packet[:-1], ("127.0.0.1", port))
+            await asyncio.sleep(0.2)
+        finally:
+            rx.stop()
+            sock.close()
+
+        assert received == []
+
+    async def test_accepts_legacy_wwd1_framed_datagram(self):
+        received = []
+        port = _find_free_udp_port()
+        rx = UDPAudioReceiver(host="127.0.0.1", port=port)
+        rx.set_audio_callback(
+            lambda aid, data, metadata: received.append((aid, data, metadata))
+        )
+        assert await rx.start() is True
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(b"WWD1\x07kitchen\x00\x01", ("127.0.0.1", port))
+            await asyncio.sleep(0.2)
+        finally:
+            rx.stop()
+            sock.close()
+
+        assert received == [("kitchen", b"\x00\x01", None)]
 
     async def test_malformed_framed_datagram_is_ignored(self):
         """Packets claiming to be framed must not leak header bytes into PCM."""
         received = []
         port = _find_free_udp_port()
         rx = UDPAudioReceiver(host="127.0.0.1", port=port)
-        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        rx.set_audio_callback(
+            lambda aid, data, metadata: received.append((aid, data, metadata))
+        )
         assert await rx.start() is True
 
         try:
@@ -138,7 +205,9 @@ class TestUDPAudioReceiver:
         received = []
         port = _find_free_udp_port()
         rx = UDPAudioReceiver(host="127.0.0.1", port=port)
-        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        rx.set_audio_callback(
+            lambda aid, data, metadata: received.append((aid, data, metadata))
+        )
         assert await rx.start() is True
 
         try:
@@ -170,7 +239,7 @@ class TestHandleUDPAudioData:
         # int16 mono @ 16 kHz => 2 bytes per sample
         payload = np.arange(160, dtype="<i2").tobytes()
 
-        await main_module.handle_udp_audio_data("192.168.1.50", payload)
+        await main_module.handle_udp_audio_data("192.168.1.50", payload, None)
 
         buffer = main_module.get_audio_buffer()
         config = buffer.get_audio_config("192.168.1.50")
@@ -181,5 +250,30 @@ class TestHandleUDPAudioData:
         assert "192.168.1.50" in main_module.udp_configured_assistants
 
         # A second datagram should append without recreating the buffer.
-        await main_module.handle_udp_audio_data("192.168.1.50", payload)
+        await main_module.handle_udp_audio_data("192.168.1.50", payload, None)
         assert buffer.get_buffer_size("192.168.1.50") == 320
+
+    async def test_uses_packet_audio_metadata(self):
+        with patch.dict(
+            os.environ,
+            {"OUTPUT_DIR": tempfile.mkdtemp(), "MQTT_BROKER": "test-broker"},
+        ):
+            import ingest_service.app.main as main_module
+            from ingest_service.app.udp_receiver import UDPAudioPacketMetadata
+
+        main_module.audio_buffer = None
+        main_module.udp_configured_assistants = set()
+        metadata = UDPAudioPacketMetadata(
+            sample_rate=48000,
+            bits_per_sample=32,
+            channels=2,
+            encoding=UDP_AUDIO_ENCODING_PCM_SIGNED_LE,
+            sequence=9,
+        )
+
+        await main_module.handle_udp_audio_data("kitchen", b"\x00" * 16, metadata)
+
+        config = main_module.get_audio_buffer().get_audio_config("kitchen")
+        assert config["sample_rate"] == 48000
+        assert config["sample_width"] == 4
+        assert config["channels"] == 2

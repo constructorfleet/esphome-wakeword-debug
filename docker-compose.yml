@@ -31,7 +31,7 @@ services:
       - SAMPLE_RATE=48000
       - SAMPLE_WIDTH=4
       - CHANNELS=1
-      # UDP ingest: framed assistant ID + int16 / mono / 16 kHz PCM.
+      # WWD2 packets are self-describing; these audio format values are legacy fallbacks.
       - UDP_ENABLED=true
       - UDP_HOST=0.0.0.0
       - UDP_PORT=6056

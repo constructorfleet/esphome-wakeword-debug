@@ -25,7 +25,7 @@ from .audio_buffer import MultiAssistantAudioBuffer
 from .wav_writer import WAVWriter
 from .mqtt_publisher import MQTTPublisher
 from .mqtt_subscriber import MQTTSubscriber
-from .udp_receiver import UDPAudioReceiver
+from .udp_receiver import UDPAudioPacketMetadata, UDPAudioReceiver
 from . import clip_db
 
 # Configure logging
@@ -200,28 +200,35 @@ async def handle_audio_data(assistant_id: str, audio_data: bytes) -> None:
     )
 
 
-async def handle_udp_audio_data(assistant_id: str, audio_data: bytes) -> None:
+async def handle_udp_audio_data(
+    assistant_id: str,
+    audio_data: bytes,
+    metadata: Optional[UDPAudioPacketMetadata],
+) -> None:
     """Handle incoming raw PCM audio from the UDP stream.
 
-    Unlike MQTT senders, the UDP `wake_audio_stream` component does not publish an
-    audio_info message, so we configure the assistant's buffer with the UDP stream
-    format (int16 / mono / 16 kHz) the first time we hear from it.
+    WWD2 packets carry their own format. Legacy WWD1 and raw-PCM packets use the
+    receiver defaults for backward compatibility.
     """
     buffer = get_audio_buffer()
+    sample_rate = metadata.sample_rate if metadata else settings.UDP_SAMPLE_RATE
+    bits_per_sample = (
+        metadata.bits_per_sample if metadata else settings.UDP_SAMPLE_WIDTH * 8
+    )
+    channels = metadata.channels if metadata else settings.UDP_CHANNELS
     if assistant_id not in udp_configured_assistants:
         # Mark configured before awaiting so datagrams that arrive during
         # set_audio_config don't each trigger a buffer recreation.
         udp_configured_assistants.add(assistant_id)
         await buffer.set_audio_config(
             assistant_id,
-            sample_rate=settings.UDP_SAMPLE_RATE,
-            bits_per_sample=settings.UDP_SAMPLE_WIDTH * 8,
-            channels=settings.UDP_CHANNELS,
+            sample_rate=sample_rate,
+            bits_per_sample=bits_per_sample,
+            channels=channels,
         )
         logger.info(
             f"Configured UDP audio buffer for assistant {assistant_id}: "
-            f"{settings.UDP_SAMPLE_RATE}Hz, {settings.UDP_SAMPLE_WIDTH * 8}-bit, "
-            f"{settings.UDP_CHANNELS} channel(s)"
+            f"{sample_rate}Hz, {bits_per_sample}-bit, {channels} channel(s)"
         )
     await buffer.append(assistant_id, audio_data)
     logger.debug(
@@ -414,12 +421,14 @@ async def startup_event():
 
     # Start UDP audio receiver (raw PCM stream from satellite1 wake_audio_stream)
     if settings.UDP_ENABLED:
-        def udp_audio_callback(assistant_id: str, data: bytes):
+        def udp_audio_callback(
+            assistant_id: str,
+            data: bytes,
+            metadata: Optional[UDPAudioPacketMetadata],
+        ):
             """Schedule the async UDP audio handler on the running loop."""
             if main_event_loop and not main_event_loop.is_closed():
-                main_event_loop.create_task(
-                    handle_udp_audio_data(assistant_id, data)
-                )
+                main_event_loop.create_task(handle_udp_audio_data(assistant_id, data, metadata))
 
         receiver = get_udp_receiver()
         receiver.set_audio_callback(udp_audio_callback)
