@@ -1,18 +1,69 @@
 import asyncio
 import logging
+import re
 from typing import Callable, Optional
 
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
+UDP_PACKET_MAGIC = b"WWD1"
+MAX_ASSISTANT_ID_BYTES = 64
+ASSISTANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def encode_udp_audio_packet(assistant_id: str, pcm_data: bytes) -> bytes:
+    """Frame PCM with an assistant ID that survives UDP proxies such as Traefik.
+
+    Wire format: ``WWD1`` magic, one-byte ID length, ASCII assistant ID, then
+    the unchanged PCM bytes.
+    """
+    try:
+        encoded_id = assistant_id.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("assistant_id must be ASCII") from exc
+    if not 1 <= len(encoded_id) <= MAX_ASSISTANT_ID_BYTES:
+        raise ValueError("assistant_id must contain 1 to 64 ASCII bytes")
+    if ASSISTANT_ID_PATTERN.fullmatch(assistant_id) is None:
+        raise ValueError(
+            "assistant_id must start with an alphanumeric character and contain "
+            "only letters, numbers, underscores, periods, or hyphens"
+        )
+    if not pcm_data:
+        raise ValueError("pcm_data must not be empty")
+    return UDP_PACKET_MAGIC + bytes((len(encoded_id),)) + encoded_id + pcm_data
+
+
+def _decode_udp_audio_packet(
+    data: bytes,
+    fallback_assistant_id: str,
+) -> Optional[tuple[str, bytes]]:
+    """Decode a framed packet, or treat a non-magic packet as legacy raw PCM."""
+    if not data.startswith(UDP_PACKET_MAGIC):
+        return fallback_assistant_id, data
+
+    if len(data) <= len(UDP_PACKET_MAGIC):
+        return None
+    id_length = data[len(UDP_PACKET_MAGIC)]
+    header_length = len(UDP_PACKET_MAGIC) + 1 + id_length
+    if not 1 <= id_length <= MAX_ASSISTANT_ID_BYTES or len(data) <= header_length:
+        return None
+
+    try:
+        assistant_id = data[len(UDP_PACKET_MAGIC) + 1 : header_length].decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if ASSISTANT_ID_PATTERN.fullmatch(assistant_id) is None:
+        return None
+    return assistant_id, data[header_length:]
+
 
 class _AudioDatagramProtocol(asyncio.DatagramProtocol):
     """asyncio protocol that forwards each received datagram to an audio callback.
 
-    The satellite1 `wake_audio_stream` component sends raw, unframed PCM
-    (int16 / mono / 16 kHz, little-endian). Each datagram is a chunk of that
-    stream, so we hand the raw bytes straight to the callback.
+    Preferred packets contain an assistant ID followed by PCM. Legacy raw PCM
+    (int16 / mono / 16 kHz, little-endian) remains supported using source-IP
+    identity for direct, unproxied deployments.
     """
 
     def __init__(
@@ -29,11 +80,17 @@ class _AudioDatagramProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr) -> None:
         if not data:
             return
-        # Attribute the audio to the configured assistant, or fall back to the
-        # sender's IP so multiple devices stay in separate buffers.
-        assistant_id = self._assistant_id or addr[0]
+        fallback_assistant_id = self._assistant_id or addr[0]
+        decoded = _decode_udp_audio_packet(data, fallback_assistant_id)
+        if decoded is None:
+            logger.warning("Ignoring malformed framed UDP audio datagram from %s", addr)
+            return
+        assistant_id, pcm_data = decoded
+        # A fixed receiver ID remains an explicit override for single-assistant
+        # deployments, even when the sender uses the framed protocol.
+        assistant_id = self._assistant_id or assistant_id
         try:
-            self._audio_callback(assistant_id, data)
+            self._audio_callback(assistant_id, pcm_data)
         except Exception:
             logger.exception("Error handling UDP audio datagram from %s", addr)
 

@@ -30,10 +30,10 @@ A comprehensive audio capture and processing pipeline for wake word debugging, c
 **Note:** Wake-word events can arrive two ways:
 - **MQTT** (`assist/debug/+/events`) — used by the MQTT audio path.
 - **HTTP** (`POST /wake_event`) — used by the UDP path, so a UDP-only device needs **no MQTT broker
-  at all**. The satellite1 firmware posts to this endpoint from `on_wake_word_detected`; when it
-  omits `assistant_id`, the service keys the clip by the caller's IP, which matches how UDP audio is
-  buffered. You can also hit the endpoint manually, or use the "capture background noise" button in
-  the review UI.
+  at all**. The satellite1 firmware posts to this endpoint from `on_wake_word_detected`. Direct
+  connections may omit `assistant_id` and use the caller's IP; deployments behind Traefik or
+  another proxy must send the same explicit assistant ID in the UDP packet and HTTP request.
+  You can also hit the endpoint manually, or use the "capture background noise" button in the UI.
 
 ## Features
 
@@ -196,13 +196,22 @@ wake_audio_stream:
   buffer_duration: 500ms
 ```
 
-The ingest service listens on `UDP_PORT` (default `6056`) with no further config. Each device is
-tracked as a separate assistant, keyed by its sender IP (override with `UDP_ASSISTANT_ID`).
+The ingest service listens on `UDP_PORT` (default `6056`) with no further config. It accepts both:
+
+- **Framed UDP packets (recommended):** `WWD1`, one byte containing the assistant-ID length,
+  the ASCII assistant ID, and the raw PCM payload. This preserves identity through Traefik and
+  other UDP proxies. IDs may contain letters, numbers, `_`, `.`, and `-`, must begin with a letter
+  or number, and are limited to 64 bytes. The current satellite1 `wake_audio_stream` component
+  automatically uses the ESPHome node name.
+- **Legacy raw PCM packets:** the sender IP is used as the assistant ID. This is suitable only when
+  devices connect directly and have distinct visible IP addresses.
+
+`UDP_ASSISTANT_ID` remains a fixed override for single-assistant deployments and deliberately sends
+all received audio to one buffer.
 
 The satellite1 firmware also posts to `POST /wake_event` from `on_wake_word_detected` (gated on the
-same capture switch), so **no MQTT broker is needed** for the UDP path — the device signals its own
-detections over HTTP, and the service keys the clip by the caller's IP to match the buffered audio.
-The firmware wiring looks like this (already included in the satellite1 `voice_assistant` package):
+same capture switch), so **no MQTT broker is needed** for the UDP path. When traffic passes through
+Traefik, include the ID from the framed UDP packet explicitly so the event selects the right buffer:
 
 ```yaml
 micro_wake_word:
@@ -212,7 +221,7 @@ micro_wake_word:
           switch.is_on: wake_audio_capture
         then:
           - http_request.post:
-              url: !lambda 'return "http://192.168.1.100:8000/wake_event?wake_word=" + wake_word;'
+              url: !lambda 'return "https://wake-debug.example/wake_event?assistant_id=kitchen&wake_word=" + wake_word;'
               capture_response: false
 ```
 
@@ -265,7 +274,7 @@ UDP_PORT=6056             # Must match the component's `port:`
 UDP_SAMPLE_RATE=16000     # microWakeWord audio: 16 kHz
 UDP_SAMPLE_WIDTH=2        # 2 bytes (16-bit)
 UDP_CHANNELS=1            # Mono
-UDP_ASSISTANT_ID=         # Fixed assistant ID; empty = use sender IP
+UDP_ASSISTANT_ID=         # Fixed override; empty = framed packet ID or sender IP
 
 # Buffer settings
 BUFFER_DURATION_SECONDS=60.0      # Total buffer size

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from unittest.mock import patch
 
-from ingest_service.app.udp_receiver import UDPAudioReceiver
+from ingest_service.app.udp_receiver import UDPAudioReceiver, encode_udp_audio_packet
 
 
 def _find_free_udp_port() -> int:
@@ -71,6 +71,67 @@ class TestUDPAudioReceiver:
 
         assert received
         assert received[0][0] == "sat1"
+
+    async def test_fixed_assistant_id_overrides_framed_id(self):
+        """The explicit single-assistant setting remains the final override."""
+        received = []
+        port = _find_free_udp_port()
+        rx = UDPAudioReceiver(host="127.0.0.1", port=port, assistant_id="sat1")
+        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        assert await rx.start() is True
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(
+                encode_udp_audio_packet("kitchen", b"\x00\x01"),
+                ("127.0.0.1", port),
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            rx.stop()
+            sock.close()
+
+        assert received == [("sat1", b"\x00\x01")]
+
+    async def test_framed_datagram_uses_embedded_assistant_id(self):
+        """A framed packet keeps assistant identity through a UDP proxy."""
+        received = []
+        port = _find_free_udp_port()
+        rx = UDPAudioReceiver(host="127.0.0.1", port=port)
+        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        assert await rx.start() is True
+
+        try:
+            pcm = np.arange(128, dtype="<i2").tobytes()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(
+                encode_udp_audio_packet("kitchen", pcm),
+                ("127.0.0.1", port),
+            )
+            await asyncio.sleep(0.2)
+        finally:
+            rx.stop()
+            sock.close()
+
+        assert received == [("kitchen", pcm)]
+
+    async def test_malformed_framed_datagram_is_ignored(self):
+        """Packets claiming to be framed must not leak header bytes into PCM."""
+        received = []
+        port = _find_free_udp_port()
+        rx = UDPAudioReceiver(host="127.0.0.1", port=port)
+        rx.set_audio_callback(lambda aid, data: received.append((aid, data)))
+        assert await rx.start() is True
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(b"WWD1\x08short", ("127.0.0.1", port))
+            await asyncio.sleep(0.2)
+        finally:
+            rx.stop()
+            sock.close()
+
+        assert received == []
 
     async def test_empty_datagram_ignored(self):
         """Zero-length datagrams do not invoke the callback."""
